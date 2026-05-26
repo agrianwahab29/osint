@@ -1,7 +1,7 @@
 """
-PEOPLE SEARCH AGGREGATOR v1 — Cross-source people data aggregation
-Searches across people search engines, public records, and data aggregators.
-Uses web scraping of free people search sites.
+PEOPLE SEARCH AGGREGATOR v2 — Region-aware, evidence-based.
+Cross-source people data aggregation with confidence scoring.
+US sources get lowered confidence for non-US targets.
 """
 import re
 import asyncio
@@ -9,45 +9,49 @@ from datetime import datetime
 from urllib.parse import quote_plus
 import httpx
 
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+from services.confidence_scoring import score_phone, score_email
 
-# Free people search engines — no API key needed
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+
+# Free people search engines — all US-centric
 PEOPLE_SEARCH_SITES = {
     "fastpeoplesearch": {
         "url": "https://www.fastpeoplesearch.com/name/{name}",
         "type": "people_search",
+        "region": "US",
     },
     "thatsthem": {
         "url": "https://thatsthem.com/name/{first}-{last}",
         "type": "people_search",
+        "region": "US",
     },
     "truepeoplesearch": {
         "url": "https://www.truepeoplesearch.com/results?name={name_encoded}",
         "type": "people_search",
+        "region": "US",
     },
     "usphonebook": {
         "url": "https://www.usphonebook.com/{first}-{last}",
         "type": "people_search",
+        "region": "US",
     },
     "whitepages": {
         "url": "https://www.whitepages.com/name/{first}-{last}",
         "type": "people_search",
-    },
-    "publicrecordsnow": {
-        "url": "https://publicrecordsnow.com/search/?name={name_encoded}",
-        "type": "public_records",
+        "region": "US",
     },
     "searchpeoplefree": {
         "url": "https://www.searchpeoplefree.com/find/{first}-{last}",
         "type": "people_search",
+        "region": "US",
     },
     "peoplesearchnow": {
         "url": "https://www.peoplesearchnow.com/person/{first}-{last}",
         "type": "people_search",
+        "region": "US",
     },
 }
 
-# Social media profile patterns to extract from pages
 PROFILE_PATTERNS = [
     (r'(?:linkedin\.com/in/)([a-zA-Z0-9_-]+)', 'linkedin'),
     (r'(?:facebook\.com/)([a-zA-Z0-9.]+)', 'facebook'),
@@ -57,31 +61,29 @@ PROFILE_PATTERNS = [
     (r'(?:medium\.com/@)([a-zA-Z0-9_]+)', 'medium'),
 ]
 
-# Email pattern
 EMAIL_PATTERN = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
-
-# Phone pattern (US and international)
 PHONE_PATTERNS = [
     r'\+?1?[ -]?\(?\d{3}\)?[ -]?\d{3}[ -]?\d{4}',
     r'\+?\d{1,3}[ -]?\d{7,14}',
 ]
-
-# Address patterns
 ADDRESS_PATTERN = r'\d{1,6}\s+[A-Za-z0-9\s.,]+(?:Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Lane|Ln|Boulevard|Blvd|Court|Ct|Way|Place|Pl|Circle|Cir)[,.\s]+[A-Za-z\s]+[,.\s]+[A-Z]{2}\s+\d{5}'
 
 
-async def _search_site(client: httpx.AsyncClient, site_name: str, site_info: dict, first: str, last: str) -> dict:
-    """Search a single people search site."""
+async def _search_site(client: httpx.AsyncClient, site_name: str, site_info: dict,
+                       first: str, last: str, country: str) -> dict:
+    """Search a single people search site with region awareness."""
     name_encoded = quote_plus(f"{first} {last}")
     url = site_info["url"].format(
-        name=name_encoded,
-        name_encoded=name_encoded,
-        first=first,
-        last=last
+        name=name_encoded, name_encoded=name_encoded, first=first, last=last
     )
 
+    region = site_info.get("region", "US")
+    is_us_source = region == "US"
+    target_not_us = country.upper() != "US"
+
     try:
-        resp = await client.get(url, headers={"User-Agent": USER_AGENT}, timeout=15.0, follow_redirects=True)
+        resp = await client.get(url, headers={"User-Agent": USER_AGENT},
+                               timeout=15.0, follow_redirects=True)
         html = resp.text[:100000]
         text_lower = html.lower()
 
@@ -97,21 +99,27 @@ async def _search_site(client: httpx.AsyncClient, site_name: str, site_info: dic
         for pattern, platform in PROFILE_PATTERNS:
             matches = re.findall(pattern, html, re.IGNORECASE)
             for m in set(matches):
-                if len(m) > 1 and m not in ['share', 'in', 'pub', 'login', 'signup']:
+                if len(m) > 1 and m not in ('share', 'in', 'pub', 'login', 'signup'):
                     profiles.append({"platform": platform, "username": m})
 
-        # Check if page has meaningful results
         no_result_indicators = [
             "no results", "not found", "no matches", "couldn't find",
             "0 results", "try again", "no records"
         ]
         has_results = not any(ind in text_lower for ind in no_result_indicators)
 
+        # Apply region-aware confidence for non-US targets
+        region_warning = None
+        if is_us_source and target_not_us:
+            region_warning = "This source is US-centric. Confidence lowered for non-US target."
+
         return {
             "site": site_name,
             "url": url,
             "status_code": resp.status_code,
             "has_results": has_results,
+            "region": region,
+            "region_warning": region_warning,
             "emails_found": emails[:5],
             "phones_found": phones[:5],
             "addresses_found": addresses[:3],
@@ -125,13 +133,14 @@ async def _search_site(client: httpx.AsyncClient, site_name: str, site_info: dic
             "status_code": 0,
             "has_results": False,
             "error": str(e)[:100],
+            "region": region,
         }
 
 
-async def search_people(full_name: str) -> dict:
+async def search_people(full_name: str, country: str = "ID") -> dict:
     """
     Aggregate people search results from multiple free sources.
-    Extracts emails, phones, addresses, and social profiles found.
+    Region-aware: US sources get lowered confidence for non-US targets.
     """
     parts = full_name.strip().split()
     if len(parts) < 2:
@@ -139,15 +148,20 @@ async def search_people(full_name: str) -> dict:
             "query": full_name,
             "error": "Need at least first and last name",
             "timestamp": datetime.now().isoformat(),
+            "status": "error",
         }
 
     first = parts[0]
     last = parts[-1]
+    country_upper = country.upper()
+    is_us_target = country_upper == "US"
 
     results = {
         "query": full_name,
         "first_name": first,
         "last_name": last,
+        "country": country_upper,
+        "is_us_target": is_us_target,
         "timestamp": datetime.now().isoformat(),
         "searches": [],
         "aggregated": {
@@ -156,16 +170,19 @@ async def search_people(full_name: str) -> dict:
             "all_addresses": [],
             "all_profiles": [],
             "sites_with_results": 0,
-        }
+        },
+        "region_warnings": [],
+        "status": "completed",
     }
 
     async with httpx.AsyncClient(verify=False, timeout=httpx.Timeout(15.0)) as client:
         tasks = [
-            _search_site(client, site_name, site_info, first, last)
+            _search_site(client, site_name, site_info, first, last, country_upper)
             for site_name, site_info in PEOPLE_SEARCH_SITES.items()
         ]
         site_results = await asyncio.gather(*tasks, return_exceptions=True)
 
+    region_warnings = []
     for r in site_results:
         if isinstance(r, BaseException) or not isinstance(r, dict):
             continue
@@ -173,33 +190,82 @@ async def search_people(full_name: str) -> dict:
 
         if r.get("has_results"):
             results["aggregated"]["sites_with_results"] += 1
-            results["aggregated"]["all_emails"].extend(r.get("emails_found", []))
-            results["aggregated"]["all_phones"].extend(r.get("phones_found", []))
-            results["aggregated"]["all_addresses"].extend(r.get("addresses_found", []))
-            results["aggregated"]["all_profiles"].extend(r.get("profiles_found", []))
 
-    # Deduplicate
-    for key in ["all_emails", "all_phones", "all_addresses"]:
-        results["aggregated"][key] = list(set(results["aggregated"][key]))
+            # Score each finding with region awareness
+            for email in r.get("emails_found", []):
+                source_type = "aggregator_us" if r.get("region") == "US" else "aggregator"
+                conf = score_email(source_type=source_type, name_match=False)
+                results["aggregated"]["all_emails"].append({
+                    "value": email,
+                    "source": r["site"],
+                    "source_url": r["url"],
+                    "region": r.get("region", "US"),
+                    "confidence": conf["score"],
+                    "confidence_label": conf["label"],
+                    "status": "unverified" if r.get("region") == "US" and not is_us_target else "candidate",
+                })
 
-    # Deduplicate profiles by platform+username
-    seen_profiles = set()
-    unique_profiles = []
-    for p in results["aggregated"]["all_profiles"]:
-        key = f"{p['platform']}:{p['username']}"
-        if key not in seen_profiles:
-            seen_profiles.add(key)
-            unique_profiles.append(p)
-    results["aggregated"]["all_profiles"] = unique_profiles
+            for phone in r.get("phones_found", []):
+                source_type = "aggregator_us" if r.get("region") == "US" else "aggregator"
+                conf = score_phone(
+                    source_reliability=source_type,
+                    region_match=is_us_target or r.get("region") != "US",
+                    country=country_upper,
+                )
+                results["aggregated"]["all_phones"].append({
+                    "value": phone,
+                    "source": r["site"],
+                    "source_url": r["url"],
+                    "region": r.get("region", "US"),
+                    "confidence": conf["score"],
+                    "confidence_label": conf["label"],
+                    "status": "unverified",
+                })
 
-    results["aggregated"]["total_found"] = (
-        len(results["aggregated"]["all_emails"]) +
-        len(results["aggregated"]["all_phones"]) +
-        len(results["aggregated"]["all_profiles"])
-    )
+            for profile in r.get("profiles_found", []):
+                results["aggregated"]["all_profiles"].append({
+                    "platform": profile["platform"],
+                    "username": profile["username"],
+                    "source": r["site"],
+                    "region": r.get("region", "US"),
+                    "confidence": 30 if r.get("region") == "US" and not is_us_target else 50,
+                    "status": "candidate",
+                })
+
+            for addr in r.get("addresses_found", []):
+                results["aggregated"]["all_addresses"].append({
+                    "value": addr,
+                    "source": r["site"],
+                    "region": r.get("region", "US"),
+                    "confidence": 20,
+                    "status": "unverified",
+                })
+
+        # Collect region warnings
+        if r.get("region_warning"):
+            region_warnings.append(r["region_warning"])
+
+    # Deduplicate warnings
+    results["region_warnings"] = list(set(region_warnings))
+
+    # Calculate totals
+    agg = results["aggregated"]
+    agg["total_found"] = (len(agg["all_emails"]) + len(agg["all_phones"]) +
+                          len(agg["all_profiles"]) + len(agg["all_addresses"]))
 
     # Generate clickable search links
     results["direct_search_links"] = _generate_direct_links(first, last)
+
+    # Empty state explanation
+    if agg["total_found"] == 0:
+        results["empty_state_reason"] = (
+            f"No data found from people aggregators for target in {country_upper}.\n"
+            "Possible reasons:\n"
+            "- Target not in US-centric databases\n"
+            "- Name is uncommon or not in public records\n"
+            "- Sources blocked or rate-limited\n"
+            "- People search is US-focused by nature"
+        )
 
     return results
 
@@ -215,5 +281,4 @@ def _generate_direct_links(first: str, last: str) -> list:
         {"name": "USPhoneBook", "url": f"https://www.usphonebook.com/{first}-{last}"},
         {"name": "WhitePages", "url": f"https://www.whitepages.com/name/{first}-{last}"},
         {"name": "Google People Search", "url": f"https://www.google.com/search?q=%22{encoded}%22+phone+OR+email+OR+address"},
-        {"name": "Pipl (Archive)", "url": f"https://pipl.com/search/?q={encoded}"},
     ]

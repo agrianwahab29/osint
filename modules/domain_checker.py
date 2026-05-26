@@ -74,7 +74,7 @@ def _extract_domain(url_or_domain: str) -> str:
 
 
 def _check_ssl(domain: str) -> dict:
-    """Check SSL/TLS certificate for a domain."""
+    """Check SSL/TLS certificate for a domain - Synchronous wrapper for backward compatibility."""
     try:
         ctx = ssl.create_default_context()
         with socket.create_connection((domain, 443), timeout=10) as sock:
@@ -108,11 +108,59 @@ def _check_ssl(domain: str) -> dict:
     except ssl.SSLCertificateVerificationError as e:
         return {"valid": False, "error": f"Certificate verification failed: {str(e)[:200]}"}
     except ssl.SSLError as e:
-        return {"valid": False, "error": f"SSL error: {str(e)[:200]}"}
+        return {"valid": False, "error": "SSL error: " + str(e)[:200]}
     except socket.timeout:
         return {"valid": False, "error": "Connection timeout"}
     except ConnectionRefusedError:
         return {"valid": False, "error": "Connection refused (port 443 closed)"}
+    except Exception as e:
+        return {"valid": False, "error": str(e)[:200]}
+
+
+async def _check_ssl_async(domain: str) -> dict:
+    """True Async SSL Checker - Non-blocking SSL validation."""
+    try:
+        ctx = ssl.create_default_context()
+        # Non-blocking connection ⚡
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(domain, 443, ssl=ctx, server_hostname=domain),
+            timeout=10.0
+        )
+        cert = writer.get_extra_info('peercert')
+        writer.close()
+        await writer.wait_closed()
+
+        expiry_str = cert.get('notAfter', '')
+        issued_str = cert.get('notBefore', '')
+        subject = dict(x[0] for x in cert.get('subject', []))
+        issuer = dict(x[0] for x in cert.get('issuer', []))
+        sans = [x[1] for x in cert.get('subjectAltName', [])]
+
+        # Parse expiry
+        try:
+            from datetime import datetime as dt
+            expiry = dt.strptime(expiry_str, '%b %d %H:%M:%S %Y %Z')
+            issued = dt.strptime(issued_str, '%b %d %H:%M:%S %Y %Z')
+            days_left = (expiry - dt.now()).days if expiry > dt.now() else 0
+        except Exception:
+            days_left = -1
+
+        return {
+            "valid": True,
+            "issuer": issuer.get('organizationName', issuer.get('commonName', 'Unknown')),
+            "issued_to": subject.get('commonName', 'Unknown'),
+            "issued_on": issued_str,
+            "expires_on": expiry_str,
+            "days_remaining": days_left,
+            "sans": sans[:20],
+            "version": cert.get('version', 0),
+        }
+    except ssl.SSLCertificateVerificationError as e:
+        return {"valid": False, "error": f"Certificate verification failed: {str(e)[:200]}"}
+    except ssl.SSLError as e:
+        return {"valid": False, "error": "SSL error: " + str(e)[:200]}
+    except asyncio.TimeoutError:
+        return {"valid": False, "error": "Connection timeout"}
     except Exception as e:
         return {"valid": False, "error": str(e)[:200]}
 
@@ -207,7 +255,7 @@ async def scan_domain(domain_input: str) -> dict:
         "query": domain_input,
         "clean_domain": domain,
         "timestamp": datetime.now().isoformat(),
-        "ssl_info": _check_ssl(domain),
+        "ssl_info": await _check_ssl_async(domain),  # 🔒 Async SSL check — no blocking
         "subdomains_found": [],
         "tech_stack": {},
         "security_headers": {},

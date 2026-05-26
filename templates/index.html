@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OSINT Tool v5.0 | Intelligence Dashboard</title>
+    <title>OSINTTool v6.0 | Forensic Intelligence Platform</title>
     <link rel="stylesheet" href="/static/css/style.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -19,7 +19,7 @@
                 <div class="logo">
                     <span class="logo-icon">🔍</span>
                     <span class="logo-text">OSINT<span class="accent">Tool</span></span>
-                    <span class="version">v5.0</span>
+                    <span class="version" id="headerVersion">v6.0</span>
                 </div>
             </div>
             <div class="header-center">
@@ -39,7 +39,7 @@
                 </nav>
             </div>
             <div class="header-right">
-                <div class="server-status" id="serverStatus">
+                <div class="server-status" id="serverStatus" title="Click for API status" style="cursor:pointer">
                     <span class="status-dot"></span>
                     <span class="status-text">Checking...</span>
                 </div>
@@ -52,14 +52,30 @@
             <section class="tab-content active" id="tab-scan">
                 <!-- Hero Search -->
                 <div class="hero">
-                    <h1>OSINT Intelligence Scanner</h1>
-                    <p>Masukkan nama, email, domain, atau nomor telepon — sistem akan mencari seluruh sumber publik secara otomatis.</p>
+                    <h1>Digital Footprint & Forensic Intelligence</h1>
+                    <p>Evidence-based OSINT. Confidence-scored findings. Free-first. Forensic-ready reports.</p>
                     <div class="search-box">
                         <div class="search-inputs">
-                            <input type="text" id="targetName" class="search-input" placeholder="Nama target (contoh: John Doe)">
-                            <input type="text" id="targetEmail" class="search-input optional" placeholder="Email (opsional)">
-                            <input type="text" id="targetDomain" class="search-input optional" placeholder="Domain (opsional)">
-                            <input type="text" id="targetPhone" class="search-input optional" placeholder="Phone (opsional)">
+                            <input type="text" id="targetName" class="search-input" placeholder="Full name (e.g. John Doe)">
+                            <input type="text" id="targetUsername" class="search-input optional" placeholder="Username (optional)">
+                            <input type="text" id="targetEmail" class="search-input optional" placeholder="Email (optional)">
+                            <input type="text" id="targetDomain" class="search-input optional" placeholder="Domain (optional)">
+                            <input type="text" id="targetPhone" class="search-input optional" placeholder="Phone (optional)">
+                            <div class="search-row">
+                                <select id="targetCountry" class="select-sm">
+                                    <option value="ID">Indonesia</option>
+                                    <option value="US">United States</option>
+                                    <option value="MY">Malaysia</option>
+                                    <option value="SG">Singapore</option>
+                                    <option value="GLOBAL">Global</option>
+                                </select>
+                                <select id="scanMode" class="select-sm">
+                                    <option value="standard">Standard Scan</option>
+                                    <option value="quick">Quick Scan</option>
+                                    <option value="forensic">Forensic Scan</option>
+                                    <option value="selfcheck">Self-Check Mode</option>
+                                </select>
+                            </div>
                         </div>
                         <button class="btn-scan" id="runScan" disabled>
                             <span class="btn-scan-icon">🚀</span>
@@ -70,46 +86,51 @@
                         <span class="module-pill">🌐 Web</span>
                         <span class="module-pill">👤 Social</span>
                         <span class="module-pill">📧 Email</span>
+                        <span class="module-pill">💻 GitHub</span>
                         <span class="module-pill">🔓 Breach</span>
+                        <span class="module-pill">🛡️ Domain</span>
                         <span class="module-pill">📱 Phone</span>
                         <span class="module-pill">🔎 People</span>
-                        <span class="module-pill">🕶️ Darkweb</span>
-                        <span class="module-pill">🏢 Domain</span>
-                        <span class="module-pill">🎯 Dorks</span>
-                        <span class="module-pill">🛰️ Shodan</span>
-                        <span class="module-pill">🛡️ VirusTotal</span>
-                        <span class="module-pill">✉️ Hunter</span>
-                        <span class="module-pill">📊 IntelX</span>
-                        <span class="module-pill">💬 Telegram</span>
+                        <span class="module-pill">🕶️ Exposure</span>
                         <span class="module-pill">🔍 WHOIS</span>
+                        <span class="module-pill">🎯 Dorks</span>
                     </div>
                 </div>
 
-                <!-- Stats -->
-                <div class="stats-row" id="statsRow">
-                    <div class="stat-chip">
-                        <span class="stat-num" id="sWeb">—</span>
-                        <span class="stat-lbl">Web</span>
+                <!-- API Status Panel -->
+                <div class="api-status-panel hidden" id="apiStatusPanel">
+                    <div class="api-status-head">
+                        <h3>🔌 API & Service Status</h3>
+                        <span id="apiFreeMode" class="badge badge-ok">Free Mode Active</span>
                     </div>
-                    <div class="stat-chip">
-                        <span class="stat-num" id="sSocial">—</span>
-                        <span class="stat-lbl">Social</span>
+                    <div class="api-status-grid" id="apiStatusGrid"></div>
+                </div>
+
+                <!-- Summary Cards -->
+                <div class="stats-row forensic-stats" id="statsRow">
+                    <div class="stat-chip forensic">
+                        <span class="stat-num" id="sPublicFindings">—</span>
+                        <span class="stat-lbl">Public Findings</span>
                     </div>
-                    <div class="stat-chip">
-                        <span class="stat-num" id="sEmail">—</span>
-                        <span class="stat-lbl">Email</span>
+                    <div class="stat-chip forensic">
+                        <span class="stat-num" id="sCandidates">—</span>
+                        <span class="stat-lbl">Candidates</span>
                     </div>
-                    <div class="stat-chip">
-                        <span class="stat-num" id="sBreach">—</span>
-                        <span class="stat-lbl">Breach</span>
+                    <div class="stat-chip forensic">
+                        <span class="stat-num" id="sVerifiedSources">—</span>
+                        <span class="stat-lbl">Verified Sources</span>
                     </div>
-                    <div class="stat-chip">
-                        <span class="stat-num" id="sGithub">—</span>
-                        <span class="stat-lbl">GitHub</span>
+                    <div class="stat-chip forensic">
+                        <span class="stat-num risk" id="sRiskScore">—</span>
+                        <span class="stat-lbl">Risk Score</span>
                     </div>
-                    <div class="stat-chip">
-                        <span class="stat-num risk" id="sRisk">—</span>
-                        <span class="stat-lbl">Risk</span>
+                    <div class="stat-chip forensic">
+                        <span class="stat-num" id="sEvidence">—</span>
+                        <span class="stat-lbl">Evidence Items</span>
+                    </div>
+                    <div class="stat-chip forensic">
+                        <span class="stat-num" id="sReportReady">—</span>
+                        <span class="stat-lbl">Report Ready</span>
                     </div>
                 </div>
 
@@ -155,7 +176,7 @@
             <!-- ============ REPORT TAB ============ -->
             <section class="tab-content" id="tab-report">
                 <div class="section-head">
-                    <h2>Generate Report</h2>
+                    <h2>Generate Forensic Report</h2>
                     <p>Buat laporan forensik dari hasil scan terakhir</p>
                 </div>
                 <div class="report-box" id="reportBox">

@@ -43,8 +43,11 @@ PLATFORMS = {
         "url": "https://www.facebook.com/{}",
         "category": "social", "popularity": "very_high",
         "detect": {
-            "not_found_text": ["content isn&#x27;t available", "page isn't available", "content not found", "Page Not Found"],
-            "found_indicators": ["facebook.com/login", "cookie", "checkpoint"],
+            # Block redirect codes 301/302 — FB selalu redirect ke login page kalo profil gak ada
+            "not_found_codes": [404, 302, 301],
+            "not_found_text": ["content isn&#x27;t available", "page isn&#x27;t available", "content not found", "Page Not Found", "Sorry, we couldn&#x27;t find"],
+            # Hapus "facebook.com/login" dari found_indicators — itu justru tanda PROFILES TIDAK ADA
+            "found_indicators": ["profilePage", "friends", "intro", "timeline"],
             "skip_min_size": True,  # facebook always returns large login pages
         }
     },

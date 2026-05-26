@@ -1,11 +1,13 @@
 """
-Report Generator v4 — Professional multi-format OSINT reports
-PDF (via reportlab), JSON, CSV, HTML — all with severity, confidence, timestamps.
+Report Generator v5 — Forensic-grade multi-format OSINT reports
+Includes: Executive Summary, Methodology, Evidence Table, Confidence Scoring,
+Risk Matrix, Timeline, Limitations, Recommendations, Appendix JSON.
 """
 import json
 import csv
 import os
 import io
+import hashlib
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -14,6 +16,9 @@ from modules.database import record_export
 
 REPORT_DIR = Path(__file__).parent.parent / "reports"
 REPORT_DIR.mkdir(exist_ok=True)
+
+# Report version
+REPORT_VERSION = "6.0.0"
 
 
 def _calc_overall_severity(results: dict) -> str:
@@ -86,31 +91,247 @@ def _count_total_findings(results: dict) -> int:
 # JSON
 # ============================================================
 
-def save_json(report_id: str, name: str, results: dict) -> str:
+def _build_forensic_report(report_id: str, name: str, results: dict) -> dict:
+    """Build a complete forensic report structure."""
     severity = _calc_overall_severity(results)
     confidence = _calc_confidence(results)
     total = _count_total_findings(results)
+    ts = datetime.now().isoformat()
+    query = results.get("query", {})
+    scan_meta = results.get("scan_metadata", {})
 
-    report = {
+    # Source inventory
+    source_inventory = []
+    for mod_name, data in results.items():
+        if not data or not isinstance(data, dict):
+            continue
+        if mod_name in ("query", "errors", "report_id", "_progress", "scan_metadata"):
+            continue
+        status = "completed" if not data.get("error") else "error"
+        source_inventory.append({
+            "module": mod_name,
+            "status": status,
+            "findings_count": _count_findings_for_module(data),
+        })
+
+    # Build findings
+    findings = []
+    for mod_name, data in results.items():
+        if not data or not isinstance(data, dict) or mod_name in ("query", "errors", "report_id", "_progress", "scan_metadata"):
+            continue
+        findings.extend(_extract_findings(mod_name, data))
+
+    # Evidence items
+    evidence = []
+    for f in findings[:50]:
+        ev_hash = hashlib.sha256(json.dumps(f, default=str, sort_keys=True).encode()).hexdigest()[:16]
+        evidence.append({
+            "evidence_id": f"EVD-{ev_hash[:8].upper()}",
+            "finding_id": f.get("finding_id", ""),
+            "source_url": f.get("source_url", ""),
+            "captured_at": ts,
+            "content_hash_sha256": ev_hash,
+        })
+
+    # Risk matrix
+    risk = _calculate_risk_matrix(findings)
+
+    # Recommendations
+    recommendations = _generate_recommendations(results, findings)
+
+    return {
         "report_metadata": {
             "report_id": report_id,
+            "report_version": REPORT_VERSION,
             "target": name,
-            "generated_at": datetime.now().isoformat(),
+            "generated_at": ts,
+            "scan_mode": scan_meta.get("scan_mode", "standard"),
+            "country": scan_meta.get("country", "ID"),
             "severity": severity,
             "confidence_score": confidence,
             "total_findings": total,
-            "modules_used": [k for k, v in results.items() if v and not k.startswith("_") and not k == "query" and not k == "errors" and not k == "report_id"],
+            "modules_used": [s["module"] for s in source_inventory],
         },
-        "query": results.get("query", {}),
-        "modules": {k: v for k, v in results.items() if k not in ("query", "errors", "report_id", "_progress")},
+        "executive_summary": {
+            "overview": f"OSINT forensic scan completed for target: {name}. Found {total} total findings across {len(source_inventory)} modules.",
+            "risk_level": severity,
+            "confidence": confidence,
+            "key_findings": risk.get("risk_reasons", [])[:5],
+        },
+        "scope": {
+            "target_name": query.get("name", name),
+            "target_email": query.get("email", ""),
+            "target_domain": query.get("domain", ""),
+            "target_phone": query.get("phone", ""),
+            "country": query.get("country", scan_meta.get("country", "ID")),
+            "scan_mode": scan_meta.get("scan_mode", "standard"),
+            "scan_date": query.get("timestamp", ts),
+        },
+        "methodology": (
+            "Public OSINT data collection from open web sources, public APIs, "
+            "DNS records, breach databases, and social platforms. "
+            "No illegal access, credential stuffing, or private scraping performed. "
+            "All findings based on publicly available information."
+        ),
+        "source_inventory": source_inventory,
+        "findings": findings,
+        "evidence_table": evidence,
+        "confidence_scoring": {
+            "overall_confidence": confidence,
+            "scale": "0-100 (Very Low: 0-24, Low: 25-49, Medium: 50-74, High: 75-89, Very High: 90-100)",
+            "methodology": "Confidence based on source reliability, name matching, and verification level",
+        },
+        "risk_matrix": risk,
+        "timeline": {
+            "scan_started": query.get("timestamp", ts),
+            "scan_completed": ts,
+        },
+        "limitations": [
+            "Email candidates are generated from name patterns and NOT verified as active",
+            "People search sources are US-centric; confidence lowered for non-US targets",
+            "Dark web/exposure checks are limited to public paste searches",
+            "API-dependent modules (HIBP, Hunter, Shodan) are disabled without API keys",
+            "Social media results may include profiles not belonging to target",
+            "Breach data may be incomplete without HIBP API key",
+            "Phone numbers from aggregators are unverified",
+        ],
+        "recommendations": recommendations,
+        "appendix_json": {
+            "modules": {k: v for k, v in results.items()
+                        if k not in ("query", "errors", "report_id", "_progress", "scan_metadata")},
+        },
     }
-    if results.get("errors"):
-        report["errors"] = results["errors"]
 
+
+def _extract_findings(mod_name: str, data: dict) -> list:
+    """Extract structured findings from module data."""
+    findings = []
+    sev = data.get("severity", "INFO")
+    ts = data.get("timestamp", datetime.now().isoformat())
+
+    for r in data.get("web_results", [])[:10]:
+        findings.append({
+            "finding_id": f"FND-{hashlib.md5(r.get('url','').encode()).hexdigest()[:8].upper()}",
+            "category": "web_result",
+            "type": "public_web_mention",
+            "value": r.get("url", ""),
+            "source_url": r.get("url", ""),
+            "source_name": r.get("source", "web"),
+            "confidence": 60,
+            "risk": "LOW",
+            "status": "publicly_observed",
+            "timestamp": ts,
+            "notes": r.get("title", ""),
+        })
+
+    for p in data.get("profiles_found", [])[:10]:
+        findings.append({
+            "finding_id": f"FND-{hashlib.md5(p.get('url','').encode()).hexdigest()[:8].upper()}",
+            "category": "social_profile",
+            "type": "social_media_profile",
+            "value": p.get("url", ""),
+            "source_url": p.get("url", ""),
+            "source_name": p.get("platform", ""),
+            "confidence": 80 if p.get("confidence") == "high" else 50,
+            "risk": "LOW",
+            "status": "source_matched",
+            "timestamp": ts,
+            "notes": f"Username: {p.get('username', '')}",
+        })
+
+    for e in data.get("publicly_found_emails", [])[:10]:
+        findings.append({
+            "finding_id": f"FND-{hashlib.md5(e.get('email','').encode()).hexdigest()[:8].upper()}",
+            "category": "email",
+            "type": "publicly_found_email",
+            "value": e.get("email", ""),
+            "source_url": e.get("source_url", ""),
+            "source_name": "Public Web Page",
+            "confidence": e.get("confidence", 85),
+            "risk": "MEDIUM",
+            "status": "publicly_observed",
+            "timestamp": ts,
+            "notes": e.get("reason", ""),
+        })
+
+    for b in data.get("breached_emails", [])[:5]:
+        findings.append({
+            "finding_id": f"FND-{hashlib.md5(b.get('email','').encode()).hexdigest()[:8].upper()}",
+            "category": "breach",
+            "type": "breached_email",
+            "value": b.get("email", ""),
+            "source_url": "https://haveibeenpwned.com",
+            "source_name": "HIBP",
+            "confidence": 95,
+            "risk": "HIGH",
+            "status": "verified",
+            "timestamp": ts,
+            "notes": f"{b.get('total_breaches', 0)} breaches found",
+        })
+
+    return findings
+
+
+def _calculate_risk_matrix(findings: list) -> dict:
+    """Calculate risk matrix from findings."""
+    risk_score = 0
+    reasons = []
+    for f in findings:
+        ftype = f.get("type", "")
+        if ftype == "publicly_found_email":
+            risk_score += 15
+            reasons.append("Public email address found")
+        elif ftype == "breached_email":
+            risk_score += 25
+            reasons.append("Email found in data breach")
+        elif ftype == "social_media_profile":
+            risk_score += 5
+        elif ftype == "public_web_mention":
+            risk_score += 2
+
+    if risk_score >= 70: level = "CRITICAL"
+    elif risk_score >= 50: level = "HIGH"
+    elif risk_score >= 30: level = "MEDIUM"
+    elif risk_score >= 10: level = "LOW"
+    else: level = "NONE"
+
+    return {
+        "risk_score": min(100, risk_score),
+        "risk_level": level,
+        "risk_reasons": reasons if reasons else ["No significant risk factors detected"],
+    }
+
+
+def _generate_recommendations(results: dict, findings: list) -> list:
+    """Generate actionable recommendations."""
+    recs = []
+    for f in findings:
+        ftype = f.get("type", "")
+        if ftype == "breached_email":
+            recs.append("Change passwords for all breached accounts immediately")
+            recs.append("Enable 2FA on accounts linked to breached email")
+        elif ftype == "publicly_found_email":
+            recs.append("Consider removing public email from web pages")
+            recs.append("Use contact forms instead of exposing email addresses")
+
+    has_domain = any(f.get("category") == "domain" for f in findings)
+    if has_domain:
+        recs.append("Configure SPF, DMARC, and DKIM for email security")
+        recs.append("Enable HSTS and security headers on web server")
+
+    recs.append("Use unique passwords per service")
+    recs.append("Monitor breach notifications via HIBP")
+    recs.append("Regularly audit digital footprint")
+
+    return list(set(recs))[:10]
+
+
+def save_json(report_id: str, name: str, results: dict) -> str:
+    """Save forensic JSON report."""
+    report = _build_forensic_report(report_id, name, results)
     filepath = REPORT_DIR / f"{report_id}_report.json"
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2, default=str, ensure_ascii=False)
-
     record_export(report_id, "json", str(filepath), os.path.getsize(filepath))
     return str(filepath)
 
@@ -319,17 +540,37 @@ def _extract_module_text(mod_name: str, data: dict) -> list:
 # ============================================================
 
 def generate_html_report(report_id: str, name: str, results: dict) -> str:
-    """Generate enhanced HTML report."""
-    severity = _calc_overall_severity(results)
-    confidence = _calc_confidence(results)
-    total = _count_total_findings(results)
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    """Generate enhanced forensic HTML report."""
+    report = _build_forensic_report(report_id, name, results)
+    severity = report["report_metadata"]["severity"]
+    confidence = report["report_metadata"]["confidence_score"]
+    total = report["report_metadata"]["total_findings"]
+    timestamp = report["report_metadata"]["generated_at"]
+    risk = report["risk_matrix"]
 
     sev_colors = {"CRITICAL": "#dc2626", "HIGH": "#ea580c", "MEDIUM": "#ca8a04", "LOW": "#2563eb", "INFO": "#6b7280"}
 
+    findings_html = ""
+    for f in report["findings"][:30]:
+        risk_cls = "tag-danger" if f.get("risk") in ("HIGH", "CRITICAL") else "tag-warn" if f.get("risk") == "MEDIUM" else "tag-success"
+        findings_html += f'''
+        <div class="item">
+            <span class="tag {risk_cls}">{f.get("risk","LOW")}</span>
+            <strong>{f.get("category","").replace("_"," ").title()}</strong> —
+            {f.get("value","")[:80]}
+            <br><small>Source: {f.get("source_url","")[:80]} | Confidence: {f.get("confidence",0)}%</small>
+        </div>'''
+
+    limitations_html = "".join(f"<li>{l}</li>" for l in report["limitations"])
+    recs_html = "".join(f"<li>{r}</li>" for r in report["recommendations"])
+    sources_html = "".join(
+        f'<tr><td>{s["module"]}</td><td>{s["status"]}</td><td>{s["findings_count"]}</td></tr>'
+        for s in report["source_inventory"]
+    )
+
     return f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>OSINT Report - {name}</title>
+<title>OSINT Forensic Report — {name}</title>
 <style>
 *{{margin:0;padding:0;box-sizing:border-box}}body{{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;line-height:1.6}}
 .container{{max-width:1000px;margin:0 auto;padding:20px}}
@@ -350,38 +591,51 @@ def generate_html_report(report_id: str, name: str, results: dict) -> str:
 .tag-warn{{background:#78350f33;color:#fbbf24;border:1px solid #78350f}}
 table{{width:100%;border-collapse:collapse;font-size:.85em}}th,td{{padding:8px 10px;text-align:left;border-bottom:1px solid #334155}}
 th{{color:#3b82f6;font-weight:600}}.footer{{text-align:center;color:#475569;font-size:.75em;padding:16px}}
+ul{{padding-left:20px}}li{{margin-bottom:4px;font-size:.85em}}
 </style></head><body><div class="container">
-<div class="header"><h1>OSINT Intelligence Report</h1>
-<p>Target: <strong>{name}</strong> | ID: {report_id}</p>
-<p class="meta">Generated: {timestamp}</p>
-<p style="margin-top:8px"><span class="severity">{severity}</span> Confidence: {confidence}% | Findings: {total}</p></div>
-<div class="grid"><div class="card"><div class="value">{len(results)}</div><div class="label">Modules</div></div>
-<div class="card"><div class="value">{total}</div><div class="label">Total Findings</div></div>
-<div class="card"><div class="value">{severity}</div><div class="label">Severity</div></div>
-<div class="card"><div class="value">{confidence}%</div><div class="label">Confidence</div></div></div>
-{"".join(_render_html_module(k,v) for k,v in results.items() if v and isinstance(v,dict) and k not in ("query","errors","report_id","_progress"))}
-<div class="footer">OSINT Framework v4.0 &mdash; For authorized security research only</div></div></body></html>"""
+<div class="header">
+    <h1>🔍 OSINT Forensic Intelligence Report</h1>
+    <p>Target: <strong>{name}</strong> | ID: {report_id}</p>
+    <p>Scan Mode: {report['report_metadata']['scan_mode']} | Country: {report['report_metadata']['country']}</p>
+    <p class="meta">Generated: {timestamp} | Report v{REPORT_VERSION}</p>
+    <p style="margin-top:8px"><span class="severity">{severity}</span> Confidence: {confidence}% | Findings: {total}</p>
+</div>
 
+<div class="grid">
+    <div class="card"><div class="value">{len(report['source_inventory'])}</div><div class="label">Modules</div></div>
+    <div class="card"><div class="value">{total}</div><div class="label">Total Findings</div></div>
+    <div class="card"><div class="value">{severity}</div><div class="label">Risk Level</div></div>
+    <div class="card"><div class="value">{confidence}%</div><div class="label">Confidence</div></div>
+</div>
 
-def _render_html_module(mod_name: str, data: dict) -> str:
-    h = f'<div class="section"><h2>{mod_name.replace("_"," ").title()}</h2>'
-    for r in data.get("web_results", [])[:10]:
-        h += f'<div class="item"><h4>{r.get("title","")[:150]}</h4><a href="{r.get("url","#")}">{r.get("url","")}</a></div>'
-    for p in data.get("profiles_found", [])[:8]:
-        h += f'<div class="item"><h4>[{p.get("platform","")}] {p.get("username","")}</h4><a href="{p.get("url","#")}">{p.get("url","")}</a> <span class="tag tag-success">{p.get("confidence","")}</span></div>'
-    for g in data.get("github_profiles", [])[:5]:
-        h += f'<div class="item"><h4>GitHub: {g.get("username","")}</h4><a href="{g.get("url","#")}">{g.get("url","")}</a></div>'
-    for w in data.get("wikipedia_mentions", [])[:3]:
-        h += f'<div class="item"><h4>{w.get("title","")}</h4><p class="snippet">{w.get("snippet","")[:200]}</p></div>'
-    for e in data.get("breached_emails", [])[:5]:
-        h += f'<div class="item"><span class="tag tag-danger">BREACHED</span> {e.get("email","")} — {e.get("total_breaches",0)} breaches</div>'
-    for b in (data.get("hibp_breaches",{}) or {}).get("breaches",[])[:5]:
-        h += f'<div class="item"><span class="tag tag-danger">BREACH</span> {b.get("title",b.get("name",""))} ({b.get("breach_date","")}) — {(b.get("pwn_count",0)):,} records</div>'
-    sm = data.get("summary",{}) or {}
-    if sm.get("risk_level"): h += f'<p>Risk: <span class="tag tag-danger">{sm["risk_level"]}</span></p>'
-    if sm.get("total_found"): h += f'<p>Found: {sm["total_found"]}</p>'
-    h += '</div>'
-    return h
+<div class="section"><h2>📋 Executive Summary</h2>
+    <p>{report['executive_summary']['overview']}</p>
+    <p style="margin-top:8px"><strong>Key Findings:</strong></p>
+    <ul>{''.join(f'<li>{k}</li>' for k in report['executive_summary']['key_findings'])}</ul>
+</div>
+
+<div class="section"><h2>🎯 Scope</h2>
+    <p>Target: {report['scope']['target_name']}</p>
+    <p>Scan Date: {report['scope']['scan_date']} | Mode: {report['scope']['scan_mode']} | Country: {report['scope']['country']}</p>
+</div>
+
+<div class="section"><h2>📊 Source Inventory</h2>
+    <table><tr><th>Module</th><th>Status</th><th>Findings</th></tr>{sources_html}</table>
+</div>
+
+<div class="section"><h2>🔍 Findings ({len(report['findings'])} total)</h2>{findings_html}</div>
+
+<div class="section"><h2>⚠️ Risk Matrix</h2>
+    <p>Risk Score: <strong>{risk['risk_score']}</strong> | Level: <span class="severity">{risk['risk_level']}</span></p>
+    <ul>{''.join(f'<li>{r}</li>' for r in risk['risk_reasons'])}</ul>
+</div>
+
+<div class="section"><h2>🛡️ Recommendations</h2><ul>{recs_html}</ul></div>
+
+<div class="section"><h2>⚠️ Limitations</h2><ul>{limitations_html}</ul></div>
+
+<div class="footer">OSINTTool v{REPORT_VERSION} — Forensic Intelligence Platform<br>For authorized security research & self-assessment only</div>
+</div></body></html>"""
 
 
 # ============================================================
@@ -389,8 +643,9 @@ def _render_html_module(mod_name: str, data: dict) -> str:
 # ============================================================
 
 def save_report(report_id: str, name: str, results: dict) -> dict:
-    """Generate and save reports in all formats."""
+    """Generate and save forensic reports in all formats."""
     files = {}
+    forensic = _build_forensic_report(report_id, name, results)
 
     files["json"] = save_json(report_id, name, results)
     files["csv"] = save_csv(report_id, name, results)
@@ -398,7 +653,7 @@ def save_report(report_id: str, name: str, results: dict) -> dict:
     if pdf_path:
         files["pdf"] = pdf_path
 
-    # HTML
+    # HTML (forensic format)
     html_path = REPORT_DIR / f"{report_id}_report.html"
     html_content = generate_html_report(report_id, name, results)
     with open(html_path, "w", encoding="utf-8") as f:
@@ -409,8 +664,9 @@ def save_report(report_id: str, name: str, results: dict) -> dict:
     return {
         "report_id": report_id,
         "files": {k: str(v) for k, v in files.items()},
-        "severity": _calc_overall_severity(results),
-        "confidence": _calc_confidence(results),
-        "total_findings": _count_total_findings(results),
+        "severity": forensic["report_metadata"]["severity"],
+        "confidence": forensic["report_metadata"]["confidence_score"],
+        "total_findings": forensic["report_metadata"]["total_findings"],
+        "risk_level": forensic["risk_matrix"]["risk_level"],
         "generated_at": datetime.now().isoformat(),
     }

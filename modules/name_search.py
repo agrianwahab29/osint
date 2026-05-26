@@ -38,6 +38,22 @@ USER_AGENTS = [
 ]
 
 
+def _is_valid_url(url: str) -> bool:
+    """Check if URL is a valid external URL (not internal/tracking)."""
+    if not url:
+        return False
+    # Block relative URLs (starting with / or //)
+    if url.startswith('/') or url.startswith('//'):
+        return False
+    # Block DuckDuckGo internal tracking URLs
+    if any(skip in url.lower() for skip in ['/l/', '/h/', '/gethtml/', '/client_']):
+        return False
+    # Must have proper scheme
+    if not (url.startswith('http://') or url.startswith('https://')):
+        return False
+    return True
+
+
 def _extract_links_from_html(html: str) -> list:
     """Extract title + URL pairs from search result HTML."""
     results = []
@@ -62,7 +78,9 @@ def _extract_links_from_html(html: str) -> list:
             title = re.sub(r'<[^>]+>', '', title).strip()
             title = re.sub(r'\s+', ' ', title)
 
-            # Skip junk URLs
+            # 🔒 FILTER: Skip invalid/tracking/internal URLs
+            if not _is_valid_url(url):
+                continue
             if not title or len(title) < 3:
                 continue
             if any(skip in url.lower() for skip in ['google.com', 'bing.com', 'yandex', '/search', '/login']):

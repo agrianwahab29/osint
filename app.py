@@ -1,6 +1,6 @@
 """
-OSINT FRAMEWORK v4.0 — Professional OSINT Backend
-16 modules, SQLite persistence, progress tracking, multi-format export.
+OSINT FRAMEWORK v6.0 — Forensic Intelligence Platform
+Free-first, evidence-based, confidence-scored OSINT.
 """
 import json
 import asyncio
@@ -12,6 +12,17 @@ from pathlib import Path
 from flask import Flask, render_template, request, jsonify, send_file, session
 from flask_cors import CORS
 
+# Config
+from config import (
+    FLASK_SECRET_KEY, FLASK_DEBUG, APP_VERSION, PORT,
+    ENABLE_HIBP_EMAIL_CHECK, ENABLE_GITHUB_INTEL, ENABLE_PUBLIC_EMAIL_DISCOVERY,
+    ENABLE_DOMAIN_FORENSIC, ENABLE_TELEGRAM_OSINT, ENABLE_GOOGLE_DORKS,
+    ENABLE_HUNTER, ENABLE_SHODAN, ENABLE_VIRUSTOTAL, ENABLE_INTELX,
+    ENABLE_DARKWEB_INTEL, ENABLE_PEOPLE_SEARCH, ENABLE_PASSWORD_EXPOSURE,
+    ENABLE_BREACH_CATALOG, get_active_module_count,
+)
+from services.api_status import get_status as get_api_status
+
 # Database
 from modules.database import (
     create_scan, update_scan_progress, complete_scan, get_scan, list_scans,
@@ -20,7 +31,7 @@ from modules.database import (
     upsert_session, increment_session_scans, get_global_stats
 )
 
-# All 16 OSINT modules
+# Modules
 from modules.name_search import search_name
 from modules.email_finder import find_emails, check_single_email
 from modules.social_media import scan_social_media, check_specific_username
@@ -39,18 +50,40 @@ from modules.telegram_osint import telegram_osint
 from modules.report_generator import save_report, generate_html_report
 
 app = Flask(__name__)
-app.secret_key = "osint-framework-v4-2026"
+app.secret_key = FLASK_SECRET_KEY
 CORS(app)
 
 PROGRESS_STORE = {}
 PROGRESS_LOCK = threading.Lock()
 
+VERSION = APP_VERSION
+MODULE_COUNT = get_active_module_count()
+
+# All possible modules
 ALL_MODULES = [
     "name_search", "email_finder", "social_media", "domain_checker",
     "breach_checker", "phone_finder", "people_search", "darkweb_intel",
     "whois_recon", "google_dorks", "shodan_intel", "virustotal_intel",
     "hunter_io", "intelx_search", "telegram_osint",
+    "github_intel", "public_email_extractor", "password_exposure",
 ]
+
+# Modules that are always active (free, no API needed)
+ALWAYS_ACTIVE = ["name_search", "social_media", "email_finder",
+                 "domain_checker", "breach_checker", "phone_finder", "whois_recon"]
+
+# Feature-gated modules
+FEATURE_MODULES = {
+    "github_intel": ENABLE_GITHUB_INTEL,
+    "people_search": ENABLE_PEOPLE_SEARCH,
+    "darkweb_intel": ENABLE_DARKWEB_INTEL,
+    "google_dorks": ENABLE_GOOGLE_DORKS,
+    "shodan_intel": ENABLE_SHODAN,
+    "virustotal_intel": ENABLE_VIRUSTOTAL,
+    "hunter_io": ENABLE_HUNTER,
+    "intelx_search": ENABLE_INTELX,
+    "telegram_osint": ENABLE_TELEGRAM_OSINT,
+}
 
 
 def _update_progress(rid: str, **kw):
@@ -69,7 +102,7 @@ def _get_progress(rid: str) -> dict:
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", version=VERSION, module_count=MODULE_COUNT)
 
 
 # ============================================================
@@ -77,7 +110,8 @@ def index():
 # ============================================================
 
 def _run_full_scan(rid: str, name: str, email: str, domain: str, phone: str,
-                   session_id: str, modules_selected=None):
+                   session_id: str, country: str = "ID", scan_mode: str = "standard",
+                   username: str = "", modules_selected=None):
     """Run all modules in background thread."""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -85,39 +119,80 @@ def _run_full_scan(rid: str, name: str, email: str, domain: str, phone: str,
     if modules_selected is None:
         modules_selected = ALL_MODULES.copy()
 
-    # Determine modules based on input
+    # Determine active modules based on input + feature flags
     active = []
     if name:
-        active.extend(["name_search", "social_media", "email_finder", "people_search", "telegram_osint", "hunter_io"])
+        am = ["name_search", "social_media", "email_finder"]
+        if username:
+            am.append("social_media")  # will be used for username check
+        if ENABLE_GITHUB_INTEL:
+            am.append("github_intel")
+        if ENABLE_PEOPLE_SEARCH:
+            am.append("people_search")
+        if ENABLE_TELEGRAM_OSINT:
+            am.append("telegram_osint")
+        if ENABLE_HUNTER:
+            am.append("hunter_io")
+        active.extend(am)
+
     if email or name:
-        active.extend(["breach_checker", "darkweb_intel", "intelx_search"])
+        am = ["breach_checker"]
+        if ENABLE_DARKWEB_INTEL:
+            am.append("darkweb_intel")
+        if ENABLE_INTELX:
+            am.append("intelx_search")
+        active.extend(am)
+
     if domain:
-        active.extend(["whois_recon", "google_dorks", "shodan_intel", "virustotal_intel", "domain_checker"])
+        am = ["whois_recon", "domain_checker"]
+        if ENABLE_GOOGLE_DORKS:
+            am.append("google_dorks")
+        if ENABLE_SHODAN:
+            am.append("shodan_intel")
+        if ENABLE_VIRUSTOTAL:
+            am.append("virustotal_intel")
+        active.extend(am)
+
     if phone:
         active.extend(["phone_finder"])
-    # Filter to selected
-    active = [m for m in active if m in modules_selected]
-    active = list(dict.fromkeys(active))
+
+    # Filter to selected + feature-gated
+    active = [m for m in active if m in modules_selected and FEATURE_MODULES.get(m, True)]
+    active = list(dict.fromkeys(active))  # deduplicate
 
     total = len(active) or 1
-    done = 0
-    results = {"query": {"name": name, "email": email, "domain": domain, "phone": phone, "timestamp": datetime.now().isoformat()}, "report_id": rid}
+    done_count = 0
+    results = {
+        "query": {
+            "name": name, "email": email, "domain": domain, "phone": phone,
+            "username": username, "country": country, "scan_mode": scan_mode,
+            "timestamp": datetime.now().isoformat()
+        },
+        "report_id": rid,
+        "scan_metadata": {
+            "version": VERSION,
+            "scan_mode": scan_mode,
+            "country": country,
+            "module_count": MODULE_COUNT,
+        }
+    }
     errors = []
     all_findings = 0
 
-    _update_progress(rid, modules_total=total, modules=active, modules_done=0, percent=0, current_module="init")
+    _update_progress(rid, modules_total=total, modules=active, modules_done=0,
+                     percent=0, current_module="init", scan_mode=scan_mode)
     update_scan_progress(rid, modules_total=total, current_module="init")
 
     def _done(mod: str, ok: bool, err: str = "", findings: int = 0):
-        nonlocal done, all_findings
-        done += 1
+        nonlocal done_count, all_findings
+        done_count += 1
         all_findings += findings
-        pct = int((done / total) * 100)
-        _update_progress(rid, modules_done=done, percent=pct, current_module=mod,
-                         status="running" if done < total else "completed",
-                         finished_at=datetime.now().isoformat() if done >= total else None)
-        update_scan_progress(rid, modules_done=done, percent=pct,
-                             current_module=mod if done < total else None)
+        pct = int((done_count / total) * 100)
+        _update_progress(rid, modules_done=done_count, percent=pct, current_module=mod,
+                         status="running" if done_count < total else "completed",
+                         finished_at=datetime.now().isoformat() if done_count >= total else None)
+        update_scan_progress(rid, modules_done=done_count, percent=pct,
+                             current_module=mod if done_count < total else None)
         if not ok:
             with PROGRESS_LOCK:
                 PROGRESS_STORE.setdefault(rid, {}).setdefault("errors", []).append(f"{mod}: {err}")
@@ -134,48 +209,81 @@ def _run_full_scan(rid: str, name: str, email: str, domain: str, phone: str,
             _done(mod, True, "", fc)
         except Exception as e:
             err = str(e)[:150]
-            results[mod] = {"error": err}
+            results[mod] = {"error": err, "status": "error"}
             errors.append({"module": mod, "error": err})
-            save_module_result(rid, mod, {}, severity="INFO", confidence=0, findings_count=0, error=err)
+            save_module_result(rid, mod, {}, severity="INFO", confidence=0,
+                             findings_count=0, error=err)
             _done(mod, False, err, 0)
 
-    # Execute
+    # Execute modules
     if "name_search" in active:
         _run_async("name_search", search_name(name), "INFO", 60)
+
     if "social_media" in active:
-        _run_async("social_media", scan_social_media(name), "INFO", 50)
+        if username:
+            _run_async("social_media", check_specific_username(username), "INFO", 50)
+        else:
+            _run_async("social_media", scan_social_media(name), "INFO", 50)
+
     if "email_finder" in active:
-        _run_async("email_finder", find_emails(name), "MEDIUM", 60)
+        # If name_search already ran, pass URLs for public extraction
+        name_results = results.get("name_search", {})
+        public_urls = name_results.get("web_results", []) if isinstance(name_results, dict) else []
+        _run_async("email_finder", find_emails(name, custom_domains=[domain] if domain else None,
+                                               public_urls=public_urls), "MEDIUM", 60)
+
+    if "github_intel" in active and ENABLE_GITHUB_INTEL:
+        target_user = username or name
+        _run_async("github_intel", _github_intel_wrapper(target_user), "MEDIUM", 60)
+
     if "people_search" in active:
-        _run_async("people_search", search_people(name), "MEDIUM", 50)
+        _run_async("people_search", search_people(name, country=country), "MEDIUM", 40)
+
     if "breach_checker" in active:
         target_email = email if email else None
         _run_async("breach_checker", check_breaches(email=target_email), "HIGH", 70)
+
     if "darkweb_intel" in active:
         target = email or name
         qtype = "email" if "@" in target else "name"
-        _run_async("darkweb_intel", darkweb_intel(target, qtype), "HIGH", 40)
+        _run_async("darkweb_intel", darkweb_intel(target, qtype), "MEDIUM", 30)
+
     if "intelx_search" in active:
         target2 = email or name or domain
-        _run_async("intelx_search", intelx_search(target2), "HIGH", 40)
+        _run_async("intelx_search", intelx_search(target2), "MEDIUM", 40)
+
     if "whois_recon" in active:
         _run_async("whois_recon", whois_recon(domain), "INFO", 80)
+
     if "google_dorks" in active:
         _run_async("google_dorks", google_dorks(domain or name), "MEDIUM", 50)
+
     if "shodan_intel" in active:
         _run_async("shodan_intel", shodan_intel(domain or ""), "MEDIUM", 60)
+
     if "virustotal_intel" in active:
         _run_async("virustotal_intel", virustotal_intel(domain or ""), "MEDIUM", 60)
+
     if "hunter_io" in active:
         _run_async("hunter_io", hunter_search(name=name, domain=domain), "LOW", 40)
+
     if "telegram_osint" in active:
         _run_async("telegram_osint", telegram_osint(name), "LOW", 30)
+
     if "domain_checker" in active:
         _run_async("domain_checker", scan_domain(domain), "INFO", 70)
+
     if "phone_finder" in active:
         _run_async("phone_finder", analyze_phone(phone), "MEDIUM", 60)
 
     loop.close()
+
+    # Memory cleanup after 1 hour
+    def memory_cleanup():
+        with PROGRESS_LOCK:
+            if rid in PROGRESS_STORE:
+                del PROGRESS_STORE[rid]
+    threading.Timer(3600, memory_cleanup).start()
 
     results["errors"] = errors if errors else None
     sev = _calc_severity(results)
@@ -183,8 +291,20 @@ def _run_full_scan(rid: str, name: str, email: str, domain: str, phone: str,
 
     complete_scan(rid, results, severity=sev, confidence=conf, total_findings=all_findings,
                   error_log=json.dumps(errors) if errors else "")
-    _update_progress(rid, status="completed", percent=100, finished_at=datetime.now().isoformat(),
+    _update_progress(rid, status="completed", percent=100,
+                     finished_at=datetime.now().isoformat(),
                      severity=sev, confidence=conf, total_findings=all_findings)
+
+
+async def _github_intel_wrapper(query: str) -> dict:
+    """Wrapper for github_intel module (lazy import)."""
+    try:
+        from modules.github_intel import search_github
+        return await search_github(query)
+    except ImportError:
+        return {"status": "disabled", "reason": "GitHub intelligence module not available"}
+    except Exception as e:
+        return {"status": "error", "error": str(e)[:150]}
 
 
 @app.route("/api/search", methods=["POST"])
@@ -194,7 +314,10 @@ def api_search():
     email = (data.get("email") or "").strip()
     domain = (data.get("domain") or "").strip()
     phone = (data.get("phone") or "").strip()
-    modules_sel = data.get("modules")  # optional filter
+    username = (data.get("username") or "").strip()
+    country = (data.get("country") or "ID").strip()
+    scan_mode = (data.get("scan_mode") or "standard").strip()
+    modules_sel = data.get("modules")
 
     if not any([name, email, domain, phone]):
         return jsonify({"error": "Minimal masukkan satu: name, email, domain, atau phone"}), 400
@@ -206,9 +329,11 @@ def api_search():
     session["session_id"] = session_id
 
     create_scan(rid, name, email, domain, phone, session_id)
-    _update_progress(rid, status="starting", percent=0)
+    _update_progress(rid, status="starting", percent=0, scan_mode=scan_mode)
 
-    t = threading.Thread(target=_run_full_scan, args=(rid, name, email, domain, phone, session_id, modules_sel), daemon=True)
+    t = threading.Thread(target=_run_full_scan, args=(
+        rid, name, email, domain, phone, session_id, country, scan_mode, username, modules_sel
+    ), daemon=True)
     t.start()
 
     session["last_report_id"] = rid
@@ -236,7 +361,19 @@ def api_results(rid):
         "module_results": module_results,
         "findings": findings,
         "findings_summary": summary,
+        "version": VERSION,
+        "module_count": MODULE_COUNT,
     })
+
+
+# ============================================================
+# API STATUS
+# ============================================================
+
+@app.route("/api/status")
+def api_status_endpoint():
+    """Return API/service status for UI panel."""
+    return jsonify(get_api_status())
 
 
 # ============================================================
@@ -262,11 +399,13 @@ def api_delete_scan(rid):
 @app.route("/api/stats")
 def api_stats():
     stats = get_global_stats()
+    stats["version"] = VERSION
+    stats["module_count"] = MODULE_COUNT
     return jsonify({"success": True, "stats": stats})
 
 
 # ============================================================
-# INDIVIDUAL MODULES (15 endpoints)
+# INDIVIDUAL MODULE ENDPOINTS
 # ============================================================
 
 @app.route("/api/name", methods=["POST"])
@@ -279,88 +418,112 @@ def api_name():
 
 @app.route("/api/email", methods=["POST"])
 def api_email():
-    d = request.get_json() or {}; n = (d.get("name") or "").strip(); e = (d.get("email") or "").strip()
-    try: r = asyncio.run(check_single_email(e) if e else find_emails(n))
-    except Exception as ex: return jsonify({"error": str(ex)}), 500
+    d = request.get_json() or {}
+    n = (d.get("name") or "").strip()
+    e = (d.get("email") or "").strip()
+    try:
+        r = asyncio.run(check_single_email(e) if e else find_emails(n))
+    except Exception as ex:
+        return jsonify({"error": str(ex)}), 500
     return jsonify({"success": True, "results": r})
 
 @app.route("/api/social", methods=["POST"])
 def api_social():
-    d = request.get_json() or {}; n = (d.get("name") or "").strip(); u = (d.get("username") or "").strip()
-    try: r = asyncio.run(check_specific_username(u) if u else scan_social_media(n))
-    except Exception as ex: return jsonify({"error": str(ex)}), 500
+    d = request.get_json() or {}
+    n = (d.get("name") or "").strip()
+    u = (d.get("username") or "").strip()
+    try:
+        r = asyncio.run(check_specific_username(u) if u else scan_social_media(n))
+    except Exception as ex:
+        return jsonify({"error": str(ex)}), 500
     return jsonify({"success": True, "results": r})
 
 @app.route("/api/domain", methods=["POST"])
 def api_domain():
-    d = request.get_json() or {}; dom = (d.get("domain") or "").strip()
+    d = request.get_json() or {}
+    dom = (d.get("domain") or "").strip()
     if not dom: return jsonify({"error": "Domain required"}), 400
     try: return jsonify({"success": True, "results": asyncio.run(scan_domain(dom))})
     except Exception as e: return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route("/api/breach", methods=["POST"])
 def api_breach():
-    d = request.get_json() or {}; e = (d.get("email") or "").strip(); dom = (d.get("domain") or "").strip()
+    d = request.get_json() or {}
+    e = (d.get("email") or "").strip()
+    dom = (d.get("domain") or "").strip()
     try: return jsonify({"success": True, "results": asyncio.run(check_breaches(email=e or None, domain=dom or None))})
     except Exception as ex: return jsonify({"error": str(ex)}), 500
 
 @app.route("/api/phone", methods=["POST"])
 def api_phone():
-    d = request.get_json() or {}; p = (d.get("phone") or "").strip()
+    d = request.get_json() or {}
+    p = (d.get("phone") or "").strip()
     try: return jsonify({"success": True, "results": asyncio.run(analyze_phone(p))})
     except Exception as e: return jsonify({"error": str(e)}), 500
 
 @app.route("/api/people", methods=["POST"])
 def api_people():
-    d = request.get_json() or {}; n = (d.get("name") or "").strip()
-    try: return jsonify({"success": True, "results": asyncio.run(search_people(n))})
+    d = request.get_json() or {}
+    n = (d.get("name") or "").strip()
+    c = (d.get("country") or "ID").strip()
+    try: return jsonify({"success": True, "results": asyncio.run(search_people(n, country=c))})
     except Exception as e: return jsonify({"error": str(e)}), 500
 
 @app.route("/api/darkweb", methods=["POST"])
 def api_darkweb():
-    d = request.get_json() or {}; q = (d.get("query") or "").strip(); t = (d.get("type") or "auto").strip()
+    d = request.get_json() or {}
+    q = (d.get("query") or "").strip()
+    t = (d.get("type") or "auto").strip()
     try: return jsonify({"success": True, "results": asyncio.run(darkweb_intel(q, t))})
     except Exception as e: return jsonify({"error": str(e)}), 500
 
 @app.route("/api/whois", methods=["POST"])
 def api_whois():
-    d = request.get_json() or {}; dom = (d.get("domain") or "").strip()
+    d = request.get_json() or {}
+    dom = (d.get("domain") or "").strip()
     try: return jsonify({"success": True, "results": asyncio.run(whois_recon(dom))})
     except Exception as e: return jsonify({"error": str(e)}), 500
 
 @app.route("/api/dorks", methods=["POST"])
 def api_dorks():
-    d = request.get_json() or {}; t = (d.get("target") or "").strip()
+    d = request.get_json() or {}
+    t = (d.get("target") or "").strip()
     try: return jsonify({"success": True, "results": asyncio.run(google_dorks(t))})
     except Exception as e: return jsonify({"error": str(e)}), 500
 
 @app.route("/api/shodan", methods=["POST"])
 def api_shodan():
-    d = request.get_json() or {}; t = (d.get("target") or "").strip()
+    d = request.get_json() or {}
+    t = (d.get("target") or "").strip()
     try: return jsonify({"success": True, "results": asyncio.run(shodan_intel(t))})
     except Exception as e: return jsonify({"error": str(e)}), 500
 
 @app.route("/api/virustotal", methods=["POST"])
 def api_virustotal():
-    d = request.get_json() or {}; t = (d.get("target") or "").strip()
+    d = request.get_json() or {}
+    t = (d.get("target") or "").strip()
     try: return jsonify({"success": True, "results": asyncio.run(virustotal_intel(t))})
     except Exception as e: return jsonify({"error": str(e)}), 500
 
 @app.route("/api/hunter", methods=["POST"])
 def api_hunter():
-    d = request.get_json() or {}; n = (d.get("name") or "").strip(); dom = (d.get("domain") or "").strip()
+    d = request.get_json() or {}
+    n = (d.get("name") or "").strip()
+    dom = (d.get("domain") or "").strip()
     try: return jsonify({"success": True, "results": asyncio.run(hunter_search(name=n, domain=dom))})
     except Exception as e: return jsonify({"error": str(e)}), 500
 
 @app.route("/api/intelx", methods=["POST"])
 def api_intelx():
-    d = request.get_json() or {}; q = (d.get("query") or "").strip()
+    d = request.get_json() or {}
+    q = (d.get("query") or "").strip()
     try: return jsonify({"success": True, "results": asyncio.run(intelx_search(q))})
     except Exception as e: return jsonify({"error": str(e)}), 500
 
 @app.route("/api/telegram", methods=["POST"])
 def api_telegram():
-    d = request.get_json() or {}; t = (d.get("target") or "").strip()
+    d = request.get_json() or {}
+    t = (d.get("target") or "").strip()
     try: return jsonify({"success": True, "results": asyncio.run(telegram_osint(t))})
     except Exception as e: return jsonify({"error": str(e)}), 500
 
@@ -400,14 +563,23 @@ def api_download(rid, fmt):
         if exp["format"] == fmt:
             fp = Path(exp["file_path"])
             if fp.exists():
-                mime = {"json": "application/json", "csv": "text/csv", "pdf": "application/pdf", "html": "text/html", "text": "text/plain"}[fmt]
-                return send_file(fp, mimetype=mime, as_attachment=True, download_name=fp.name)
+                mime = {"json": "application/json", "csv": "text/csv",
+                        "pdf": "application/pdf", "html": "text/html",
+                        "text": "text/plain"}[fmt]
+                return send_file(fp, mimetype=mime, as_attachment=True,
+                               download_name=fp.name)
     return jsonify({"error": "Export not found"}), 404
 
 
 @app.route("/api/health")
 def health():
-    return jsonify({"status": "online", "version": "4.0.0", "modules": len(ALL_MODULES), "modules_list": ALL_MODULES, "timestamp": datetime.now().isoformat()})
+    return jsonify({
+        "status": "online",
+        "version": VERSION,
+        "modules": MODULE_COUNT,
+        "modules_list": ALL_MODULES[:MODULE_COUNT],
+        "timestamp": datetime.now().isoformat(),
+    })
 
 
 @app.errorhandler(404)
@@ -423,11 +595,15 @@ def se(e): return jsonify({"error": "Internal error"}), 500
 def _count_findings(data: dict) -> int:
     if not data or not isinstance(data, dict): return 0
     c = 0
-    for k in ["web_results", "profiles_found", "github_profiles", "wikipedia_mentions", "breached_emails", "subdomains_found"]:
+    for k in ["web_results", "profiles_found", "github_profiles", "wikipedia_mentions",
+              "breached_emails", "subdomains_found"]:
         c += len(data.get(k, []))
+    c += len(data.get("publicly_found_emails", []))
+    c += len(data.get("candidate_emails", []))
     c += data.get("total_results", 0) + data.get("total_generated", 0) + data.get("total_matches", 0)
     sm = data.get("summary", {}) or {}
     c += sm.get("total_found", 0) + sm.get("total_unique_breaches", 0) + sm.get("total_findings", 0)
+    c += sm.get("publicly_found", 0) + sm.get("candidates", 0)
     return c
 
 
@@ -436,8 +612,10 @@ def _calc_severity(results: dict) -> str:
     best = 0
     for v in results.values():
         if not v or not isinstance(v, dict): continue
-        sev = v.get("severity") or v.get("risk_level") or (v.get("summary", {}) or {}).get("risk_level") or \
-              (v.get("hibp_breaches", {}) or {}).get("risk_level") or (v.get("risk_assessment", {}) or {}).get("risk_level")
+        sev = (v.get("severity") or v.get("risk_level") or
+               (v.get("summary", {}) or {}).get("risk_level") or
+               (v.get("hibp_breaches", {}) or {}).get("risk_level") or
+               (v.get("risk_assessment", {}) or {}).get("risk_level"))
         if sev and scores.get(sev, 0) > best:
             best = scores.get(sev, 0)
     for k, s in scores.items():
@@ -453,8 +631,8 @@ def _calc_confidence(results: dict) -> int:
             if k in v and isinstance(v[k], (int, float)):
                 confs.append(int(v[k]))
         sm = v.get("summary", {}) or {}
-        if isinstance(sm.get("confidence"), (int, float)):
-            confs.append(int(sm["confidence"]))
+        if isinstance(sm.get("highest_confidence"), (int, float)):
+            confs.append(int(sm["highest_confidence"]))
     return int(sum(confs) / len(confs)) if confs else 50
 
 
@@ -463,20 +641,32 @@ def _add_module_findings(rid: str, mod: str, data: dict):
     sev = data.get("severity", "INFO")
     conf = data.get("confidence", data.get("confidence_score", 50))
     ts = datetime.now().isoformat()
+
     for r in data.get("web_results", [])[:20]:
-        add_finding(rid, mod, "web_result", r.get("url", ""), {"title": r.get("title", "")}, sev, conf, r.get("source", ""))
+        add_finding(rid, mod, "web_result", r.get("url", ""),
+                    {"title": r.get("title", "")}, sev, conf, r.get("source", ""))
     for p in data.get("profiles_found", [])[:20]:
-        add_finding(rid, mod, "social_profile", p.get("url", ""), {"platform": p.get("platform", ""), "username": p.get("username", "")}, sev, conf, p.get("platform", ""))
+        add_finding(rid, mod, "social_profile", p.get("url", ""),
+                    {"platform": p.get("platform", ""), "username": p.get("username", "")},
+                    sev, conf, p.get("platform", ""))
+    for e in data.get("publicly_found_emails", [])[:10]:
+        add_finding(rid, mod, "publicly_found_email", e.get("email", ""),
+                    {"source_url": e.get("source_url", ""), "confidence": e.get("confidence", 0)},
+                    "MEDIUM", e.get("confidence", 50), e.get("source_url", ""))
     for e in data.get("breached_emails", [])[:10]:
-        add_finding(rid, mod, "breached_email", e.get("email", ""), {"total_breaches": e.get("total_breaches", 0)}, "HIGH", conf, "hibp")
+        add_finding(rid, mod, "breached_email", e.get("email", ""),
+                    {"total_breaches": e.get("total_breaches", 0)},
+                    "HIGH", conf, "hibp")
     for s in data.get("subdomains_found", [])[:10]:
-        add_finding(rid, mod, "subdomain", s.get("subdomain", ""), {"status": s.get("status", 0)}, "LOW", conf, "dns")
+        add_finding(rid, mod, "subdomain", s.get("subdomain", ""),
+                    {"status": s.get("status", 0)}, "LOW", conf, "dns")
     if data.get("cleaned"):
-        add_finding(rid, mod, "phone", data["cleaned"], {"country": (data.get("country_info", {}) or {}).get("country", "")}, "MEDIUM", conf, "phone")
+        add_finding(rid, mod, "phone", data["cleaned"],
+                    {"country": (data.get("country_info", {}) or {}).get("country", "")},
+                    "MEDIUM", conf, "phone")
 
 
 if __name__ == "__main__":
-    import os
-    port = int(os.environ.get("PORT", 5000))
-    print(f"\n    OSINT FRAMEWORK v4.0 — {len(ALL_MODULES)} Modules — http://localhost:{port}\n")
-    app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
+    print(f"\n    OSINT FRAMEWORK v{VERSION} — {MODULE_COUNT} Modules (Free-first Mode)")
+    print(f"    Forensic Intelligence Edition — http://localhost:{PORT}\n")
+    app.run(host="0.0.0.0", port=PORT, debug=FLASK_DEBUG, threaded=True)

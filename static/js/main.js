@@ -12,6 +12,8 @@ document.addEventListener('DOMContentLoaded', () => {
     scanForm();
     historyTab();
     reportTab();
+    exifTab();
+    indonesiaTab();
     document.getElementById('serverStatus').addEventListener('click', toggleApiStatus);
     // Advanced input toggle
     const advBtn = document.getElementById('toggleAdvanced');
@@ -959,4 +961,241 @@ function toast(msg, type) {
         t.style.transition = 'opacity .3s';
         setTimeout(() => t.remove(), 300);
     }, 4000);
+}
+
+// ============================================================
+// EXIF METADATA EXTRACTOR
+// ============================================================
+function exifTab() {
+    const urlBtn = document.getElementById('exifFromUrl');
+    const fileInput = document.getElementById('exifFileInput');
+    const fileName = document.getElementById('exifFileName');
+    const reverseBtn = document.getElementById('reverseImgBtn');
+
+    if (urlBtn) urlBtn.addEventListener('click', extractExifFromUrl);
+    if (fileInput) {
+        fileInput.addEventListener('change', () => {
+            const f = fileInput.files[0];
+            if (f) {
+                fileName.textContent = f.name;
+                extractExifFromFile(f);
+            }
+        });
+    }
+    if (reverseBtn) reverseBtn.addEventListener('click', getReverseImageLinks);
+}
+
+async function extractExifFromUrl() {
+    const url = document.getElementById('exifUrl').value.trim();
+    if (!url) return toast('Masukkan URL gambar', 'error');
+    const out = document.getElementById('exifResults');
+    out.innerHTML = '<div class="text-center"><div class="spin"></div><p>Extracting EXIF...</p></div>';
+    try {
+        const r = await fetch(`${API}/api/exif/url`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url })
+        });
+        const d = await r.json();
+        renderExifResult(d.results || d);
+    } catch (e) {
+        out.innerHTML = `<p class="text-danger">${esc(e.message)}</p>`;
+    }
+}
+
+async function extractExifFromFile(file) {
+    const out = document.getElementById('exifResults');
+    out.innerHTML = '<div class="text-center"><div class="spin"></div><p>Extracting EXIF...</p></div>';
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+        const r = await fetch(`${API}/api/exif/upload`, { method: 'POST', body: fd });
+        const d = await r.json();
+        renderExifResult(d.results || d);
+    } catch (e) {
+        out.innerHTML = `<p class="text-danger">${esc(e.message)}</p>`;
+    }
+}
+
+function renderExifResult(res) {
+    const out = document.getElementById('exifResults');
+    if (!res || res.status === 'error') {
+        out.innerHTML = `<div class="empty-state"><p class="text-danger">⚠️ ${esc((res && res.error) || 'Failed')}</p></div>`;
+        return;
+    }
+    if (res.status === 'no_exif') {
+        out.innerHTML = `<div class="empty-state">
+            <p>📭 No EXIF metadata found.</p>
+            <p class="text-muted small">${esc((res.warnings || []).join(' '))}</p>
+        </div>`;
+        return;
+    }
+
+    let h = '<div class="finding-card"><div class="finding-head open status-info"><div class="finding-head-left"><h3>📷 EXIF Metadata</h3></div></div><div class="finding-body open">';
+
+    // Image info
+    const img = res.image_info || {};
+    h += `<div class="r-item"><h4>📐 Image Info</h4>
+        <p>Format: <code>${esc(img.format||'?')}</code> | Size: ${img.width||'?'}×${img.height||'?'}</p></div>`;
+
+    // GPS
+    const gps = res.gps || {};
+    if (gps.coordinates) {
+        h += `<div class="r-item found-item">
+            <h4>📍 GPS Location <span class="badge badge-bad">EXPOSED</span></h4>
+            <p>Coordinates: <code>${esc(gps.coordinates)}</code></p>
+            ${gps.altitude_meters ? `<p>Altitude: ${gps.altitude_meters}m</p>` : ''}
+            <div class="r-meta">
+                <a href="${safeUrl(gps.google_maps_url)}" target="_blank" class="tag tag-found">🗺️ Google Maps</a>
+                <a href="${safeUrl(gps.openstreetmap_url)}" target="_blank" class="tag tag-found">🌍 OpenStreetMap</a>
+            </div>
+        </div>`;
+    }
+
+    // Camera
+    const cam = res.camera || {};
+    if (Object.keys(cam).length) {
+        h += '<div class="r-item"><h4>📸 Camera</h4><table class="o-table">';
+        Object.entries(cam).forEach(([k,v]) => h += `<tr><td>${esc(k)}</td><td><code>${esc(v)}</code></td></tr>`);
+        h += '</table></div>';
+    }
+
+    // Software
+    const sw = res.software || {};
+    if (Object.keys(sw).length) {
+        h += '<div class="r-item"><h4>💻 Software</h4><table class="o-table">';
+        Object.entries(sw).forEach(([k,v]) => h += `<tr><td>${esc(k)}</td><td><code>${esc(v)}</code></td></tr>`);
+        h += '</table></div>';
+    }
+
+    // Datetime
+    const dt = res.exif || {};
+    if (Object.keys(dt).length) {
+        h += '<div class="r-item"><h4>🕒 Timestamps</h4><table class="o-table">';
+        Object.entries(dt).forEach(([k,v]) => h += `<tr><td>${esc(k)}</td><td><code>${esc(v)}</code></td></tr>`);
+        h += '</table></div>';
+    }
+
+    // All tags collapsed
+    if (res.all_tags && Object.keys(res.all_tags).length) {
+        h += '<details class="r-item"><summary><strong>📋 All EXIF Tags (' + Object.keys(res.all_tags).length + ')</strong></summary><table class="o-table">';
+        Object.entries(res.all_tags).forEach(([k,v]) => h += `<tr><td>${esc(k)}</td><td><code>${esc(v)}</code></td></tr>`);
+        h += '</table></details>';
+    }
+
+    // Warnings
+    if ((res.warnings || []).length) {
+        h += '<div class="warning-box"><strong>⚠️ Privacy Warnings:</strong><ul>';
+        res.warnings.forEach(w => h += `<li>${esc(w)}</li>`);
+        h += '</ul></div>';
+    }
+
+    h += '</div></div>';
+    out.innerHTML = h;
+}
+
+async function getReverseImageLinks() {
+    const url = document.getElementById('reverseImgUrl').value.trim();
+    if (!url) return toast('Masukkan URL gambar', 'error');
+    const out = document.getElementById('exifResults');
+    try {
+        const r = await fetch(`${API}/api/reverse-image`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url })
+        });
+        const d = await r.json();
+        let h = '<div class="finding-card"><div class="finding-head open status-info"><div class="finding-head-left"><h3>🔄 Reverse Image Search</h3></div></div><div class="finding-body open">';
+        h += '<p class="text-muted small">Click each link to manually search this image:</p>';
+        (d.links || []).forEach(l => {
+            h += `<div class="r-item"><a href="${safeUrl(l.url)}" target="_blank" class="url"><strong>${l.icon} ${esc(l.name)}</strong></a><br><span class="text-muted small">${esc(l.url.substring(0,80))}...</span></div>`;
+        });
+        h += '</div></div>';
+        out.innerHTML = h;
+    } catch (e) {
+        out.innerHTML = `<p class="text-danger">${esc(e.message)}</p>`;
+    }
+}
+
+// ============================================================
+// INDONESIA PUBLIC DATA
+// ============================================================
+function indonesiaTab() {
+    const btn = document.getElementById('indonesiaSearch');
+    if (btn) btn.addEventListener('click', searchIndonesia);
+    const input = document.getElementById('indonesiaName');
+    if (input) input.addEventListener('keypress', e => { if (e.key === 'Enter') searchIndonesia(); });
+}
+
+async function searchIndonesia() {
+    const name = document.getElementById('indonesiaName').value.trim();
+    if (!name) return toast('Masukkan nama', 'error');
+    const out = document.getElementById('indonesiaResults');
+    out.innerHTML = '<div class="text-center"><div class="spin"></div><p>Searching PDDikti, Garuda, SINTA...</p></div>';
+    try {
+        const r = await fetch(`${API}/api/indonesia`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name })
+        });
+        const d = await r.json();
+        renderIndonesiaResult(d.results || d);
+    } catch (e) {
+        out.innerHTML = `<p class="text-danger">${esc(e.message)}</p>`;
+    }
+}
+
+function renderIndonesiaResult(res) {
+    const out = document.getElementById('indonesiaResults');
+    if (!res) return;
+    let h = '';
+
+    // Source summary
+    h += '<div class="finding-card"><div class="finding-head open status-info"><div class="finding-head-left"><h3>📊 Sources Checked</h3><div class="finding-badges"><span class="badge badge-info">' + (res.summary?.sources_checked || 0) + ' sources</span></div></div></div><div class="finding-body open">';
+    (res.sources || []).forEach(s => {
+        const cls = s.count > 0 ? 'badge-ok' : 'badge-gray';
+        h += `<div class="r-item"><strong>${esc(s.label)}</strong> <span class="badge ${cls}">${s.count} results</span> <span class="text-muted small">(status: ${esc(s.status)})</span></div>`;
+    });
+    h += '</div></div>';
+
+    // Academic profiles
+    const profiles = res.academic_profiles || [];
+    if (profiles.length) {
+        h += '<div class="finding-card"><div class="finding-head open status-verified"><div class="finding-head-left"><h3>🎓 Academic Profiles</h3><div class="finding-badges"><span class="badge badge-ok">' + profiles.length + ' found</span></div></div></div><div class="finding-body open">';
+        profiles.forEach(p => {
+            h += `<div class="r-item found-item">
+                <h4>${esc(p.name||'?')}</h4>
+                ${p.nim ? `<p>NIM: <code>${esc(p.nim)}</code></p>` : ''}
+                ${p.university ? `<p>University: ${esc(p.university)}</p>` : ''}
+                ${p.program ? `<p>Program: ${esc(p.program)}</p>` : ''}
+                ${p.source_url ? `<a href="${safeUrl(p.source_url)}" target="_blank" class="url small">${esc(p.source_url)}</a>` : ''}
+                <div class="r-meta">${confidenceBadge(p.confidence||60)} ${statusBadge(p.status||'source_matched')}</div>
+            </div>`;
+        });
+        h += '</div></div>';
+    }
+
+    // Publications
+    const pubs = res.publications || [];
+    if (pubs.length) {
+        h += '<div class="finding-card"><div class="finding-head open status-info"><div class="finding-head-left"><h3>📚 Publications</h3><div class="finding-badges"><span class="badge badge-info">' + pubs.length + ' found</span></div></div></div><div class="finding-body open">';
+        pubs.forEach(p => {
+            h += `<div class="r-item">
+                <h4>${esc(p.title||'')}</h4>
+                ${p.source_url ? `<a href="${safeUrl(p.source_url)}" target="_blank" class="url small">${esc(p.source_url)}</a>` : ''}
+                <div class="r-meta">${confidenceBadge(p.confidence||50)}</div>
+            </div>`;
+        });
+        h += '</div></div>';
+    }
+
+    // Empty state
+    if (!profiles.length && !pubs.length) {
+        h += `<div class="empty-state">
+            <p>📭 No results found in Indonesian databases.</p>
+            <p class="text-muted small">${esc(res.empty_state_reason || '')}</p>
+        </div>`;
+    }
+
+    out.innerHTML = h;
 }

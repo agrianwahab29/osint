@@ -47,6 +47,11 @@ from modules.hunter_io import hunter_search
 from modules.intelx_search import intelx_search
 from modules.telegram_osint import telegram_osint
 from modules.report_generator import save_report, generate_html_report
+from modules.exif_extractor import (
+    extract_exif_from_url, extract_exif_from_bytes,
+    get_reverse_image_search_links,
+)
+from modules.indonesia_scraper import search_indonesia
 
 app = Flask(__name__)
 app.secret_key = FLASK_SECRET_KEY
@@ -513,6 +518,67 @@ def api_telegram():
     t = (d.get("target") or "").strip()
     try: return jsonify({"success": True, "results": asyncio.run(telegram_osint(t))})
     except Exception as e: return jsonify({"error": str(e)}), 500
+
+
+# ============================================================
+# EXIF METADATA
+# ============================================================
+
+@app.route("/api/exif/url", methods=["POST"])
+def api_exif_url():
+    """Extract EXIF from image URL."""
+    d = request.get_json() or {}
+    url = (d.get("url") or "").strip()
+    if not url:
+        return jsonify({"error": "Image URL required"}), 400
+    try:
+        return jsonify({"success": True, "results": asyncio.run(extract_exif_from_url(url))})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/exif/upload", methods=["POST"])
+def api_exif_upload():
+    """Extract EXIF from uploaded image file."""
+    if "file" not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+    file = request.files["file"]
+    if not file.filename:
+        return jsonify({"error": "Empty filename"}), 400
+    try:
+        image_bytes = file.read()
+        result = extract_exif_from_bytes(image_bytes, source_url=f"upload:{file.filename}")
+        return jsonify({"success": True, "results": result})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/reverse-image", methods=["POST"])
+def api_reverse_image():
+    """Get reverse image search links."""
+    d = request.get_json() or {}
+    url = (d.get("url") or "").strip()
+    if not url:
+        return jsonify({"error": "Image URL required"}), 400
+    links = get_reverse_image_search_links(url)
+    return jsonify({"success": True, "links": links})
+
+
+# ============================================================
+# INDONESIA PUBLIC DATA
+# ============================================================
+
+@app.route("/api/indonesia", methods=["POST"])
+def api_indonesia():
+    """Search Indonesian public databases (PDDikti, Garuda, SINTA)."""
+    d = request.get_json() or {}
+    name = (d.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "Name required"}), 400
+    try:
+        return jsonify({"success": True, "results": asyncio.run(search_indonesia(name))})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 # ============================================================

@@ -390,7 +390,7 @@ PLATFORMS = {
 
 
 def _generate_usernames(full_name: str) -> list:
-    """Generate candidate usernames from a full name."""
+    """Generate candidate usernames from a full name — realistic patterns only."""
     parts = full_name.lower().strip().split()
     usernames = set()
 
@@ -399,35 +399,45 @@ def _generate_usernames(full_name: str) -> list:
         last = parts[-1]
         middle = parts[1] if len(parts) > 2 else ""
 
-        # Core patterns
-        for f, l in [(first, last), (last, first)]:
-            usernames.add(f"{f}{l}")
-            usernames.add(f"{f}.{l}")
-            usernames.add(f"{f}_{l}")
-            usernames.add(f"{f}-{l}")
-            usernames.add(f"{f[0]}{l}")
-            usernames.add(f"{f}{l[0]}")
-            usernames.add(f"{f[0]}.{l}")
-            usernames.add(f"{f}.{l[0]}")
-
+        # Core realistic patterns (no single-char prefix like "a.wahab")
+        usernames.add(f"{first}{last}")
+        usernames.add(f"{first}.{last}")
+        usernames.add(f"{first}_{last}")
+        usernames.add(f"{first}-{last}")
+        usernames.add(f"{last}{first}")
+        usernames.add(f"{last}.{first}")
+        usernames.add(f"{last}_{first}")
+        usernames.add(f"{first}{last}29")
+        usernames.add(f"{first}{last}99")
+        usernames.add(f"{first}{last}01")
         usernames.add(first)
         usernames.add(last)
         usernames.add(f"real_{first}{last}")
         usernames.add(f"its_{first}{last}")
         usernames.add(f"the_{first}{last}")
         usernames.add(f"{first}{last}official")
-        usernames.add(f"{first[0]}{middle}{last}" if middle else f"{first}{last}")
+        usernames.add(f"{first}{last}_")
+        if middle:
+            usernames.add(f"{first}{middle}{last}")
+            usernames.add(f"{first}.{middle}.{last}")
 
     else:
         usernames.add(parts[0])
         usernames.add(f"{parts[0]}official")
         usernames.add(f"real{parts[0]}")
+        usernames.add(f"{parts[0]}29")
+        usernames.add(f"{parts[0]}99")
 
-    # Remove anything that could be problematic in URL
+    # Clean: remove invalid chars, filter out single-char or "a.xxx" patterns
     cleaned = set()
     for u in usernames:
         u = re.sub(r'[^a-z0-9._-]', '', u)
-        if 1 <= len(u) <= 39:
+        # FILTER: reject usernames that are just 1 char or start with single char + separator
+        if len(u) <= 2:
+            continue
+        if re.match(r'^[a-z][._-]', u) and len(u.split('.')[0]) == 1:
+            continue
+        if len(u) <= 39:
             cleaned.add(u)
 
     return sorted(cleaned)

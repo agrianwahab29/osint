@@ -28,6 +28,14 @@
                         <span class="tab-icon">🎯</span>
                         <span class="tab-label">Scan</span>
                     </button>
+                    <button class="tab" data-tab="exif">
+                        <span class="tab-icon">📷</span>
+                        <span class="tab-label">EXIF</span>
+                    </button>
+                    <button class="tab" data-tab="indonesia">
+                        <span class="tab-icon">🇮🇩</span>
+                        <span class="tab-label">Indonesia</span>
+                    </button>
                     <button class="tab" data-tab="history">
                         <span class="tab-icon">📋</span>
                         <span class="tab-label">History</span>
@@ -192,6 +200,51 @@
                         </button>
                     </div>
                     <div class="report-result" id="reportResult" style="display:none"></div>
+                </div>
+            </section>
+
+            <!-- ============ EXIF TAB ============ -->
+            <section class="tab-content" id="tab-exif">
+                <div class="section-head">
+                    <h2>📷 EXIF Metadata Extractor</h2>
+                    <p>Ekstrak metadata dari gambar — GPS, kamera, timestamp, software.</p>
+                </div>
+                <div class="exif-box">
+                    <div class="input-row">
+                        <input type="text" id="exifUrl" class="search-input" placeholder="Paste image URL (https://...)">
+                        <button class="btn-scan" id="exifFromUrl" style="width:auto;padding:10px 20px">
+                            <span>🔍 Extract EXIF</span>
+                        </button>
+                    </div>
+                    <div class="input-row" style="margin-top:8px">
+                        <label class="file-upload-label">
+                            <input type="file" id="exifFileInput" accept="image/*" style="display:none">
+                            <span class="btn-sec">📁 Upload Image</span>
+                        </label>
+                        <span class="text-muted small" id="exifFileName">No file selected</span>
+                    </div>
+                    <div class="input-row" style="margin-top:8px">
+                        <input type="text" id="reverseImgUrl" class="search-input" placeholder="Image URL for reverse search">
+                        <button class="btn-sec" id="reverseImgBtn">🔄 Reverse Image Links</button>
+                    </div>
+                    <div id="exifResults" style="margin-top:12px"></div>
+                </div>
+            </section>
+
+            <!-- ============ INDONESIA TAB ============ -->
+            <section class="tab-content" id="tab-indonesia">
+                <div class="section-head">
+                    <h2>🇮🇩 Indonesia Public Data</h2>
+                    <p>Cari data publik dari PDDikti, Garuda, SINTA, Google Scholar ID.</p>
+                </div>
+                <div class="indonesia-box">
+                    <div class="input-row">
+                        <input type="text" id="indonesiaName" class="search-input" placeholder="Nama lengkap (contoh: Budi Santoso)">
+                        <button class="btn-scan" id="indonesiaSearch" style="width:auto;padding:10px 20px">
+                            <span>🔍 Search</span>
+                        </button>
+                    </div>
+                    <div id="indonesiaResults" style="margin-top:12px"></div>
                 </div>
             </section>
         </main>

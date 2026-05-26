@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OSINT Tool v2.0 | Intelligence Gathering Platform</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- Background Effects -->
+    <div class="bg-grid"></div>
+    <div class="bg-glow"></div>
+
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <span class="logo-icon">🔍</span>
+                    <span class="logo-text">OSINT<span class="accent">Tool</span></span>
+                </div>
+                <span class="version">v2.0</span>
+            </div>
+
+            <nav class="sidebar-nav">
+                <a href="/" class="nav-item active" data-page="dashboard">
+                    <span class="nav-icon">⊞</span>
+                    <span class="nav-label">Dashboard</span>
+                </a>
+                <a href="#" class="nav-item" data-page="name-search">
+                    <span class="nav-icon">👤</span>
+                    <span class="nav-label">Name Search</span>
+                </a>
+                <a href="#" class="nav-item" data-page="social-media">
+                    <span class="nav-icon">🌐</span>
+                    <span class="nav-label">Social Media</span>
+                </a>
+                <a href="#" class="nav-item" data-page="email-finder">
+                    <span class="nav-icon">📧</span>
+                    <span class="nav-label">Email Finder</span>
+                </a>
+                <a href="#" class="nav-item" data-page="domain-checker">
+                    <span class="nav-icon">🏢</span>
+                    <span class="nav-label">Domain Intel</span>
+                </a>
+                <a href="#" class="nav-item" data-page="breach-checker">
+                    <span class="nav-icon">🔓</span>
+                    <span class="nav-label">Breach Check</span>
+                </a>
+                <a href="#" class="nav-item" data-page="phone-finder">
+                    <span class="nav-icon">📱</span>
+                    <span class="nav-label">Phone Intel</span>
+                </a>
+                <a href="#" class="nav-item" data-page="people-search">
+                    <span class="nav-icon">🔎</span>
+                    <span class="nav-label">People Search</span>
+                </a>
+                <a href="#" class="nav-item" data-page="darkweb-intel">
+                    <span class="nav-icon">🕶️</span>
+                    <span class="nav-label">Dark Web Intel</span>
+                </a>
+            </nav>
+
+            <div class="sidebar-footer">
+                <div class="server-status" id="serverStatus">
+                    <span class="status-dot"></span>
+                    <span class="status-text">Checking...</span>
+                </div>
+                <div class="disclaimer">
+                    ⚠️ For authorized security research only
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Top Bar -->
+            <header class="topbar">
+                <button class="mobile-menu-btn" id="mobileMenuBtn">☰</button>
+                <div class="search-bar-container">
+                    <input type="text" id="quickSearch" class="quick-search" placeholder="Quick OSINT search — enter name, email, domain, or phone...">
+                    <button class="btn btn-primary" id="quickSearchBtn">Search All</button>
+                </div>
+                <div class="topbar-actions">
+                    <button class="btn btn-outline btn-sm" id="generateReportBtn">📄 Generate Report</button>
+                    <span class="badge badge-info" id="activeModules">7 Modules</span>
+                </div>
+            </header>
+
+            <!-- Dashboard / Results Area -->
+            <div class="content-area" id="contentArea">
+                <!-- Dashboard Content -->
+                <section class="page-section active" id="dashboard">
+                    <div class="section-header">
+                        <h1>OSINT Intelligence Dashboard</h1>
+                        <p>Multi-source intelligence gathering platform. Enter a target and run all modules simultaneously.</p>
+                    </div>
+
+                    <!-- Quick Start Card -->
+                    <div class="card hero-card">
+                        <div class="hero-input-group">
+                            <input type="text" id="targetName" class="hero-input" placeholder="Enter target name (e.g. John Doe)...">
+                            <input type="text" id="targetEmail" class="hero-input secondary" placeholder="Email (optional)">
+                            <input type="text" id="targetDomain" class="hero-input secondary" placeholder="Domain (optional)">
+                            <input type="text" id="targetPhone" class="hero-input secondary" placeholder="Phone (optional)">
+                            <button class="btn btn-primary btn-lg" id="runAllModules">
+                                🚀 Run Full OSINT Scan
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Stats Grid -->
+                    <div class="stats-grid" id="statsGrid">
+                        <div class="stat-card">
+                            <div class="stat-icon">🌐</div>
+                            <div class="stat-value" id="statWeb">—</div>
+                            <div class="stat-label">Web Results</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon">👤</div>
+                            <div class="stat-value" id="statSocial">—</div>
+                            <div class="stat-label">Social Profiles</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon">📧</div>
+                            <div class="stat-value" id="statEmail">—</div>
+                            <div class="stat-label">Email Permutations</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon">🔓</div>
+                            <div class="stat-value" id="statBreach">—</div>
+                            <div class="stat-label">Breaches Found</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon">💻</div>
+                            <div class="stat-value" id="statGithub">—</div>
+                            <div class="stat-label">GitHub Profiles</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon">⚠️</div>
+                            <div class="stat-value" id="statRisk">—</div>
+                            <div class="stat-label">Risk Level</div>
+                        </div>
+                    </div>
+
+                    <!-- Results Container -->
+                    <div class="results-container" id="resultsContainer" style="display:none;">
+                        <!-- Module results loaded dynamically -->
+                    </div>
+
+                    <!-- Loading -->
+                    <div class="loading-overlay hidden" id="loadingOverlay">
+                        <div class="spinner"></div>
+                        <p>Running OSINT scan across all modules...</p>
+                        <p class="loading-detail" id="loadingDetail"></p>
+                    </div>
+                </section>
+
+                <!-- Individual Module Pages -->
+                <section class="page-section" id="name-search-page">
+                    <div class="section-header"><h2>Name Search</h2></div>
+                    <div class="card"><input type="text" id="nameSearchInput" placeholder="Full name..." class="hero-input"><button class="btn btn-primary" id="nameSearchBtn">Search</button></div>
+                    <div class="results-container" id="nameSearchResults"></div>
+                </section>
+                <section class="page-section" id="social-media-page">
+                    <div class="section-header"><h2>Social Media Scan</h2></div>
+                    <div class="card"><input type="text" id="socialSearchInput" placeholder="Name or username..." class="hero-input"><button class="btn btn-primary" id="socialSearchBtn">Scan 40+ Platforms</button></div>
+                    <div class="results-container" id="socialSearchResults"></div>
+                </section>
+                <section class="page-section" id="email-finder-page">
+                    <div class="section-header"><h2>Email Intelligence</h2></div>
+                    <div class="card"><input type="text" id="emailSearchInput" placeholder="Full name..." class="hero-input"><button class="btn btn-primary" id="emailSearchBtn">Find Emails</button></div>
+                    <div class="results-container" id="emailSearchResults"></div>
+                </section>
+                <section class="page-section" id="domain-checker-page">
+                    <div class="section-header"><h2>Domain Intelligence</h2></div>
+                    <div class="card"><input type="text" id="domainSearchInput" placeholder="domain.com..." class="hero-input"><button class="btn btn-primary" id="domainSearchBtn">Scan Domain</button></div>
+                    <div class="results-container" id="domainSearchResults"></div>
+                </section>
+                <section class="page-section" id="breach-checker-page">
+                    <div class="section-header"><h2>Breach Checker</h2></div>
+                    <div class="card"><input type="text" id="breachSearchInput" placeholder="email@domain.com..." class="hero-input"><button class="btn btn-primary" id="breachSearchBtn">Check Breaches</button></div>
+                    <div class="results-container" id="breachSearchResults"></div>
+                </section>
+                <section class="page-section" id="phone-finder-page">
+                    <div class="section-header"><h2>Phone Intelligence</h2></div>
+                    <div class="card"><input type="text" id="phoneSearchInput" placeholder="+62812345678..." class="hero-input"><button class="btn btn-primary" id="phoneSearchBtn">Analyze Phone</button></div>
+                    <div class="results-container" id="phoneSearchResults"></div>
+                </section>
+                <section class="page-section" id="people-search-page">
+                    <div class="section-header"><h2>People Search Aggregator</h2><p>Searches across free people search engines and public records</p></div>
+                    <div class="card"><input type="text" id="peopleSearchInput" placeholder="First Last (e.g. John Doe)..." class="hero-input"><button class="btn btn-primary" id="peopleSearchBtn">Search People</button></div>
+                    <div class="results-container" id="peopleSearchResults"></div>
+                </section>
+                <section class="page-section" id="darkweb-intel-page">
+                    <div class="section-header"><h2>Dark Web Intelligence</h2><p>Searches public breach databases, paste sites, and dark web mirrors</p></div>
+                    <div class="card"><input type="text" id="darkwebSearchInput" placeholder="email, username, or domain..." class="hero-input"><button class="btn btn-primary" id="darkwebSearchBtn">Search Dark Sources</button></div>
+                    <div class="results-container" id="darkwebSearchResults"></div>
+                </section>
+            </div>
+        </main>
+
+        <!-- Report Modal -->
+        <div class="modal hidden" id="reportModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>📄 Intelligence Report</h3>
+                    <button class="modal-close" id="closeModal">×</button>
+                </div>
+                <div class="modal-body">
+                    <div id="reportContent">
+                        <p>Generating report...</p>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-outline" id="downloadJsonBtn">Download JSON</button>
+                    <button class="btn btn-outline" id="downloadHtmlBtn">Download HTML</button>
+                    <button class="btn btn-primary" id="downloadTxtBtn">Download Text</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Toast Container -->
+        <div class="toast-container" id="toastContainer"></div>
+    </div>
+
+    <script src="/static/js/main.js"></script>
+</body>
+</html>

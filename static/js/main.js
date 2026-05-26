@@ -483,15 +483,6 @@ function renderFindings(r, findingsSummary) {
                     });
                 }
 
-                // Intel
-                const intel = ed.intel || {};
-                if (intel.most_likely_format) {
-                    h += `<div class="intel-box">
-                        <p><strong>Most likely format:</strong> <code>${esc(intel.most_likely_format)}</code></p>
-                        <p><strong>HIBP Status:</strong> <span class="badge ${intel.hibp_status==='enabled'?'badge-ok':'badge-gray'}">${intel.hibp_status||'disabled'}</span></p>
-                    </div>`;
-                }
-
                 if (!pubFound.length && !candidates.length) {
                     h += emptyState('email', ed.empty_state_reason || 'No emails generated. Provide first and last name.');
                 }

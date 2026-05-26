@@ -1,6 +1,6 @@
 """
-Breach Checker Module - Data breach intelligence
-Checks emails/domains against known breach databases (HIBP API, breach directory).
+Breach Checker Module v2 — Free-first data breach intelligence.
+HIBP email check requires API key (optional). Falls back to breach catalogue.
 """
 import re
 import hashlib
@@ -9,7 +9,19 @@ from datetime import datetime
 from typing import Optional
 import httpx
 
-USER_AGENT = "OSINT-Tool/1.0"
+from config import HIBP_API_KEY, ENABLE_HIBP_EMAIL_CHECK, ENABLE_BREACH_CATALOG
+
+USER_AGENT = "OSINT-Tool/2.0"
+
+# HIBP disabled response when no API key
+HIBP_DISABLED = {
+    "breached": False,
+    "total_breaches": 0,
+    "breaches": [],
+    "status": "disabled",
+    "risk_level": "UNKNOWN",
+    "reason": "HIBP API key not configured. Set HIBP_API_KEY in .env to enable email breach checking."
+}
 
 # HIBP API endpoints
 HIBP_BREACHED_ACCOUNT = "https://haveibeenpwned.com/api/v3/breachedaccount/{}"
@@ -79,8 +91,12 @@ def _hash_email(email: str) -> str:
 
 
 async def _check_hibp_account(client: httpx.AsyncClient, email: str) -> dict:
-    """Check HIBP for email breaches."""
-    headers = {"User-Agent": USER_AGENT}
+    """Check HIBP for email breaches — requires API key."""
+    # FREE-FIRST: don't attempt if no API key configured
+    if not HIBP_API_KEY or not ENABLE_HIBP_EMAIL_CHECK:
+        return dict(HIBP_DISABLED)
+
+    headers = {"User-Agent": USER_AGENT, "hibp-api-key": HIBP_API_KEY}
     try:
         resp = await client.get(
             HIBP_BREACHED_ACCOUNT.format(email),
@@ -185,7 +201,8 @@ def _calculate_risk(breaches: list) -> str:
 async def check_breaches(email: Optional[str] = None, domain: Optional[str] = None) -> dict:
     """
     Check data breach status for email or domain.
-    Uses HIBP API and known breach directory.
+    HIBP email check requires API key (optional, free-first).
+    Breach catalogue always available.
     """
     results = {
         "timestamp": datetime.now().isoformat(),
@@ -194,17 +211,20 @@ async def check_breaches(email: Optional[str] = None, domain: Optional[str] = No
         "hibp_breaches": {},
         "hibp_pastes": {},
         "known_major_breaches": [],
+        "api_status": {
+            "hibp_email_check": "enabled" if (HIBP_API_KEY and ENABLE_HIBP_EMAIL_CHECK) else "disabled",
+            "breach_catalogue": "enabled" if ENABLE_BREACH_CATALOG else "disabled",
+        },
         "summary": {},
     }
 
     async with httpx.AsyncClient() as client:
         if email:
-            # HIBP check
             results["hibp_breaches"] = await _check_hibp_account(client, email)
             results["hibp_pastes"] = await _check_hibp_pastes(client, email)
 
-    # Cross-reference with known major breaches
-    if domain:
+    # Cross-reference with known major breaches (free, always available)
+    if domain and ENABLE_BREACH_CATALOG:
         domain_lower = domain.lower()
         for breach_name, info in KNOWN_MAJOR_BREACHES.items():
             if domain_lower in breach_name.lower():
@@ -216,13 +236,34 @@ async def check_breaches(email: Optional[str] = None, domain: Optional[str] = No
     # Generate summary
     hibp = results["hibp_breaches"]
     pastes = results["hibp_pastes"]
-    results["summary"] = {
-        "total_unique_breaches": hibp.get("total_breaches", 0),
-        "total_pastes": pastes.get("paste_count", 0),
-        "risk_level": hibp.get("risk_level", "NONE"),
-        "data_classes_exposed": _aggregate_data_classes(hibp.get("breaches", [])),
-        "recommendations": _generate_recommendations(hibp, pastes),
-    }
+
+    # If HIBP is disabled, include that info in summary
+    if hibp.get("status") == "disabled":
+        results["summary"] = {
+            "total_unique_breaches": 0,
+            "total_pastes": 0,
+            "risk_level": "UNKNOWN",
+            "data_classes_exposed": [],
+            "recommendations": [
+                "HIBP email check disabled — API key not configured.",
+                "Enable HIBP_API_KEY in .env for full breach checking.",
+                "Free alternatives: use breach catalogue or password exposure check.",
+            ],
+            "hibp_status": "disabled",
+            "hibp_reason": hibp.get("reason", ""),
+        }
+        # Still show catalogue matches if any
+        if results["known_major_breaches"]:
+            results["summary"]["breach_catalogue_matches"] = len(results["known_major_breaches"])
+    else:
+        results["summary"] = {
+            "total_unique_breaches": hibp.get("total_breaches", 0),
+            "total_pastes": pastes.get("paste_count", 0),
+            "risk_level": hibp.get("risk_level", "NONE"),
+            "data_classes_exposed": _aggregate_data_classes(hibp.get("breaches", [])),
+            "recommendations": _generate_recommendations(hibp, pastes),
+            "hibp_status": "enabled",
+        }
 
     return results
 

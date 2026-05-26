@@ -36,7 +36,6 @@ from modules.name_search import search_name
 from modules.email_finder import find_emails, check_single_email
 from modules.social_media import scan_social_media, check_specific_username
 from modules.domain_checker import scan_domain
-from modules.breach_checker import check_breaches
 from modules.phone_finder import analyze_phone
 from modules.people_search import search_people
 from modules.darkweb_intel import darkweb_intel
@@ -62,7 +61,7 @@ MODULE_COUNT = get_active_module_count()
 # All possible modules
 ALL_MODULES = [
     "name_search", "email_finder", "social_media", "domain_checker",
-    "breach_checker", "phone_finder", "people_search", "darkweb_intel",
+    "phone_finder", "people_search", "darkweb_intel",
     "whois_recon", "google_dorks", "shodan_intel", "virustotal_intel",
     "hunter_io", "intelx_search", "telegram_osint",
     "github_intel", "public_email_extractor", "password_exposure",
@@ -70,7 +69,7 @@ ALL_MODULES = [
 
 # Modules that are always active (free, no API needed)
 ALWAYS_ACTIVE = ["name_search", "social_media", "email_finder",
-                 "domain_checker", "breach_checker", "phone_finder", "whois_recon"]
+                 "domain_checker", "phone_finder", "whois_recon"]
 
 # Feature-gated modules
 FEATURE_MODULES = {
@@ -136,7 +135,7 @@ def _run_full_scan(rid: str, name: str, email: str, domain: str, phone: str,
         active.extend(am)
 
     if email or name:
-        am = ["breach_checker"]
+        am = []
         if ENABLE_DARKWEB_INTEL:
             am.append("darkweb_intel")
         if ENABLE_INTELX:
@@ -238,10 +237,6 @@ def _run_full_scan(rid: str, name: str, email: str, domain: str, phone: str,
 
     if "people_search" in active:
         _run_async("people_search", search_people(name, country=country), "MEDIUM", 40)
-
-    if "breach_checker" in active:
-        target_email = email if email else None
-        _run_async("breach_checker", check_breaches(email=target_email), "HIGH", 70)
 
     if "darkweb_intel" in active:
         target = email or name
@@ -445,14 +440,6 @@ def api_domain():
     if not dom: return jsonify({"error": "Domain required"}), 400
     try: return jsonify({"success": True, "results": asyncio.run(scan_domain(dom))})
     except Exception as e: return jsonify({"success": False, "error": str(e)}), 500
-
-@app.route("/api/breach", methods=["POST"])
-def api_breach():
-    d = request.get_json() or {}
-    e = (d.get("email") or "").strip()
-    dom = (d.get("domain") or "").strip()
-    try: return jsonify({"success": True, "results": asyncio.run(check_breaches(email=e or None, domain=dom or None))})
-    except Exception as ex: return jsonify({"error": str(ex)}), 500
 
 @app.route("/api/phone", methods=["POST"])
 def api_phone():

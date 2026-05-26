@@ -331,11 +331,27 @@ a:hover { text-decoration:underline; }
 .search-row {
     display:flex; gap:8px; margin-top:4px;
 }
-.search-row .select-sm {
+.input-row {
+    display:flex; gap:8px; margin-bottom:6px;
+}
+.input-row .search-input { flex:1; }
+.input-row .search-input.primary {
+    border-color:var(--acc); background:rgba(59,130,246,0.05);
+}
+.collapse-row.closed { display:none; }
+.collapse-row.open { display:flex; }
+.select-sm {
     background:var(--bg3); border:1px solid var(--border);
     color:var(--t1); padding:6px 10px; border-radius:var(--rs);
     font-size:.8em; font-family:var(--sans);
 }
+.btn-sm { padding:6px 12px; font-size:.75em; }
+.btn-sec {
+    background:var(--bg3); border:1px solid var(--border);
+    color:var(--t2); padding:6px 14px; border-radius:var(--rs);
+    cursor:pointer; font-size:.8em; transition:all .2s;
+}
+.btn-sec:hover { background:var(--bg4); color:var(--t1); }
 
 /* Forensic summary cards */
 .stats-row.forensic-stats { gap:10px; }

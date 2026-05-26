@@ -12,8 +12,10 @@ document.addEventListener('DOMContentLoaded', () => {
     scanForm();
     historyTab();
     reportTab();
-    // Click server status to toggle API panel
     document.getElementById('serverStatus').addEventListener('click', toggleApiStatus);
+    // Advanced input toggle
+    const advBtn = document.getElementById('toggleAdvanced');
+    if (advBtn) advBtn.addEventListener('click', toggleAdvanced);
 });
 
 // ============================================================
@@ -95,6 +97,24 @@ function tabs() {
 }
 
 // ============================================================
+// TOGGLE ADVANCED INPUTS
+// ============================================================
+function toggleAdvanced() {
+    const row = document.getElementById('advancedInputs');
+    const btn = document.getElementById('toggleAdvanced');
+    const isClosed = row.classList.contains('collapse-row');
+    if (isClosed || row.classList.contains('closed')) {
+        row.classList.remove('collapse-row', 'closed');
+        row.classList.add('open');
+        if (btn) btn.textContent = '- Advanced';
+    } else {
+        row.classList.add('collapse-row', 'closed');
+        row.classList.remove('open');
+        if (btn) btn.textContent = '+ Advanced';
+    }
+}
+
+// ============================================================
 // SCAN FORM
 // ============================================================
 function scanForm() {
@@ -162,7 +182,7 @@ async function runScan(payload) {
 // ============================================================
 const MOD_NAMES = {
     name_search: 'Web & Name', social_media: 'Social Media', email_finder: 'Email Intel',
-    people_search: 'People Search', breach_checker: 'Breach Check', darkweb_intel: 'Exposure Intel',
+    people_search: 'People Search', darkweb_intel: 'Exposure Intel',
     domain_checker: 'Domain Intel', phone_finder: 'Phone Intel', whois_recon: 'WHOIS/DNS',
     google_dorks: 'Google Dorks', shodan_intel: 'Shodan', virustotal_intel: 'VirusTotal',
     hunter_io: 'Hunter.io', intelx_search: 'IntelX', telegram_osint: 'Telegram',
@@ -224,7 +244,7 @@ function updatePills(modules, doneCount, errors) {
     const pills = document.querySelectorAll('.module-pill');
     const pillMap = {
         '🌐 Web': 'name_search', '👤 Social': 'social_media', '📧 Email': 'email_finder',
-        '💻 GitHub': 'github_intel', '🔓 Breach': 'breach_checker', '🛡️ Domain': 'domain_checker',
+        '💻 GitHub': 'github_intel', '🛡️ Domain': 'domain_checker',
         '📱 Phone': 'phone_finder', '🔎 People': 'people_search',
         '🕶️ Exposure': 'darkweb_intel', '🎯 Dorks': 'google_dorks',
         '🔍 WHOIS': 'whois_recon'
@@ -477,38 +497,6 @@ function renderFindings(r, findingsSummary) {
                 }
                 return h;
             });
-    }
-
-    // ===== Breach Check =====
-    const bd = r.breach_checker;
-    if (bd && !bd.error) {
-        const hibp = bd.hibp_breaches || {};
-        const sm = bd.summary || {};
-        const total = hibp.total_breaches || sm.total_unique_breaches || 0;
-        html += cardPanel('🔓 Breach Database Check', `${total} breaches`, total > 0 ? 'high_risk' : 'verified', 'hibp', true, () => {
-            let h = '';
-            if (hibp.breached) {
-                h += `<p class="text-danger"><strong>${hibp.total_breaches} breaches found</strong> | Risk: <span class="badge badge-bad">${hibp.risk_level||sm.risk_level||'?'}</span></p>`;
-                (hibp.breaches||[]).slice(0, 8).forEach(b => {
-                    h += `<div class="breach-item">
-                        <h4>${esc(b.title||b.name||'')}</h4>
-                        <p>${b.breach_date||'?'} | ${(b.pwn_count||0).toLocaleString()} records</p>
-                        <p class="snippet">${esc((b.description||'').substring(0,200))}</p>
-                        <div class="meta">${(b.data_classes||[]).slice(0,5).map(c=>`<span class="tag tag-danger">${esc(c)}</span>`).join('')}</div>
-                    </div>`;
-                });
-            } else if (hibp.error) {
-                h += `<p class="text-warn">⚠️ ${esc(hibp.error)}</p>`;
-            } else {
-                h += '<p class="text-success">✅ No known breaches found in HIBP database.</p>';
-            }
-            if ((sm.recommendations||[]).length) {
-                h += '<p class="mt-2"><strong>🔒 Recommendations:</strong></p><ul>';
-                sm.recommendations.forEach(x => h += `<li>${esc(x)}</li>`);
-                h += '</ul>';
-            }
-            return h;
-        });
     }
 
     // ===== Exposure Intelligence (was Dark Web) =====
@@ -793,7 +781,6 @@ function updateStats(r, findings) {
             if ((val.profiles_found || []).length > 0) verifiedSources++;
             if ((val.publicly_found_emails || []).length > 0) verifiedSources++;
             if ((val.profiles_found || []).length > 0) verifiedSources++;
-            if ((val.breaches || []).length > 0) verifiedSources++;
         }
     }
 
@@ -802,8 +789,6 @@ function updateStats(r, findings) {
 
     // Risk score
     let riskScore = 0;
-    const bd = r.breach_checker || {};
-    if (((bd.hibp_breaches || {}).total_breaches || 0) > 0) riskScore += 30;
     if (publicFindings > 0) riskScore += 15;
     if (candidates > 10) riskScore += 10;
 
@@ -829,6 +814,23 @@ function s(id, v) { const e = document.getElementById(id); if (e) e.textContent 
 function historyTab() {
     document.getElementById('refreshHistory').addEventListener('click', loadHistory);
     document.getElementById('historyFilter').addEventListener('change', loadHistory);
+    const clearBtn = document.getElementById('clearHistory');
+    if (clearBtn) {
+        clearBtn.addEventListener('click', async () => {
+            if (!confirm('Hapus semua history scan? Data tidak bisa dikembalikan.')) return;
+            try {
+                const r = await fetch(`${API}/api/history?limit=200`);
+                const d = await r.json();
+                if (d.scans) {
+                    for (const s of d.scans) {
+                        await fetch(`${API}/api/history/${s.report_id}`, { method: 'DELETE' });
+                    }
+                }
+                toast('History cleared', 'info');
+                loadHistory();
+            } catch { toast('Failed to clear history', 'error'); }
+        });
+    }
 }
 
 async function loadHistory() {

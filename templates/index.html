@@ -39,7 +39,7 @@
                 </nav>
             </div>
             <div class="header-right">
-                <div class="server-status" id="serverStatus" title="Click for API status" style="cursor:pointer">
+                <div class="server-status" id="serverStatus" title="Klik untuk lihat API status">
                     <span class="status-dot"></span>
                     <span class="status-text">Checking...</span>
                 </div>
@@ -53,41 +53,46 @@
                 <!-- Hero Search -->
                 <div class="hero">
                     <h1>Digital Footprint & Forensic Intelligence</h1>
-                    <p>Evidence-based OSINT. Confidence-scored findings. Free-first. Forensic-ready reports.</p>
+                    <p>Evidence-based OSINT. Free-first. Forensic-ready. No overclaim.</p>
+
                     <div class="search-box">
                         <div class="search-inputs">
-                            <input type="text" id="targetName" class="search-input" placeholder="Full name (e.g. John Doe)">
-                            <input type="text" id="targetUsername" class="search-input optional" placeholder="Username (optional)">
-                            <input type="text" id="targetEmail" class="search-input optional" placeholder="Email (optional)">
-                            <input type="text" id="targetDomain" class="search-input optional" placeholder="Domain (optional)">
-                            <input type="text" id="targetPhone" class="search-input optional" placeholder="Phone (optional)">
-                            <div class="search-row">
+                            <div class="input-row">
+                                <input type="text" id="targetName" class="search-input primary" placeholder="Full name — wajib diisi (contoh: Agrian Wahab)">
+                                <input type="text" id="targetUsername" class="search-input" placeholder="Username — opsional">
+                            </div>
+                            <div class="input-row collapse-row closed" id="advancedInputs">
+                                <input type="email" id="targetEmail" class="search-input" placeholder="Email — opsional">
+                                <input type="text" id="targetDomain" class="search-input" placeholder="Domain — opsional (contoh: example.com)">
+                                <input type="tel" id="targetPhone" class="search-input" placeholder="Phone — opsional">
+                            </div>
+                            <div class="input-row">
                                 <select id="targetCountry" class="select-sm">
-                                    <option value="ID">Indonesia</option>
-                                    <option value="US">United States</option>
-                                    <option value="MY">Malaysia</option>
-                                    <option value="SG">Singapore</option>
-                                    <option value="GLOBAL">Global</option>
+                                    <option value="ID">🇮🇩 Indonesia</option>
+                                    <option value="US">🇺🇸 United States</option>
+                                    <option value="MY">🇲🇾 Malaysia</option>
+                                    <option value="SG">🇸🇬 Singapore</option>
+                                    <option value="GLOBAL">🌍 Global</option>
                                 </select>
                                 <select id="scanMode" class="select-sm">
                                     <option value="standard">Standard Scan</option>
                                     <option value="quick">Quick Scan</option>
                                     <option value="forensic">Forensic Scan</option>
-                                    <option value="selfcheck">Self-Check Mode</option>
                                 </select>
+                                <button class="btn-sec btn-sm" id="toggleAdvanced" type="button">+ Advanced</button>
                             </div>
                         </div>
                         <button class="btn-scan" id="runScan" disabled>
                             <span class="btn-scan-icon">🚀</span>
-                            <span>SCAN ALL MODULES</span>
+                            <span>START SCAN</span>
                         </button>
                     </div>
+
                     <div class="modules-bar" id="modulesBar">
                         <span class="module-pill">🌐 Web</span>
                         <span class="module-pill">👤 Social</span>
                         <span class="module-pill">📧 Email</span>
                         <span class="module-pill">💻 GitHub</span>
-                        <span class="module-pill">🔓 Breach</span>
                         <span class="module-pill">🛡️ Domain</span>
                         <span class="module-pill">📱 Phone</span>
                         <span class="module-pill">🔎 People</span>
@@ -118,7 +123,7 @@
                     </div>
                     <div class="stat-chip forensic">
                         <span class="stat-num" id="sVerifiedSources">—</span>
-                        <span class="stat-lbl">Verified Sources</span>
+                        <span class="stat-lbl">Sources Verified</span>
                     </div>
                     <div class="stat-chip forensic">
                         <span class="stat-num risk" id="sRiskScore">—</span>
@@ -127,10 +132,6 @@
                     <div class="stat-chip forensic">
                         <span class="stat-num" id="sEvidence">—</span>
                         <span class="stat-lbl">Evidence Items</span>
-                    </div>
-                    <div class="stat-chip forensic">
-                        <span class="stat-num" id="sReportReady">—</span>
-                        <span class="stat-lbl">Report Ready</span>
                     </div>
                 </div>
 
@@ -157,16 +158,17 @@
             <section class="tab-content" id="tab-history">
                 <div class="section-head">
                     <h2>Scan History</h2>
-                    <p>Riwayat semua scan yang pernah dilakukan</p>
+                    <p>Riwayat semua scan yang pernah dilakukan. Klik untuk lihat hasil.</p>
                 </div>
                 <div class="history-toolbar">
                     <button class="btn-sec" id="refreshHistory">🔄 Refresh</button>
                     <select id="historyFilter" class="select-sm">
-                        <option value="">Semua Status</option>
+                        <option value="">Semua</option>
                         <option value="completed">Completed</option>
                         <option value="running">Running</option>
                         <option value="error">Error</option>
                     </select>
+                    <button class="btn-sec" id="clearHistory" style="margin-left:auto">🗑️ Clear History</button>
                 </div>
                 <div id="historyList" class="history-list">
                     <p class="text-muted">Belum ada scan.</p>
@@ -177,16 +179,16 @@
             <section class="tab-content" id="tab-report">
                 <div class="section-head">
                     <h2>Generate Forensic Report</h2>
-                    <p>Buat laporan forensik dari hasil scan terakhir</p>
+                    <p>Buat laporan forensik lengkap dari hasil scan</p>
                 </div>
                 <div class="report-box" id="reportBox">
                     <div class="report-id-row">
                         <label>Report ID:</label>
-                        <input type="text" id="reportIdInput" class="search-input" placeholder="Masukkan Report ID atau gunakan scan terakhir">
+                        <input type="text" id="reportIdInput" class="search-input" placeholder="Report ID dari scan terakhir">
                     </div>
                     <div class="report-actions">
-                        <button class="btn-scan" id="genReport" style="width:auto;padding:12px 32px">
-                            <span>📄 Generate Report</span>
+                        <button class="btn-scan" id="genReport">
+                            <span>📄 Generate Full Report</span>
                         </button>
                     </div>
                     <div class="report-result" id="reportResult" style="display:none"></div>

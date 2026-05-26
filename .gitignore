@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.env
+
+# Database
+osint.db
+*.sqlite
+
+# Reports (generated)
+reports/*_*.json
+reports/*_*.csv
+reports/*_*.html
+reports/*_*.pdf
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

@@ -19,6 +19,10 @@ reports/*_*.pdf
 .vscode/
 .idea/
 
+# Playwright test artifacts
+.playwright-mcp/
+ui-check.png
+
 # OS
 .DS_Store
 Thumbs.db
